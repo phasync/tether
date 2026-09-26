@@ -1,0 +1,16 @@
+{
+    "name": "phasync/tether-playground-basic",
+    "description": "A plain mini application, to prove mini runs on swerve as it runs on PHP-FPM",
+    "type": "project",
+    "require": {
+        "php": ">=8.3",
+        "fubber/mini": "@dev",
+        "phasync/swerve": "@dev"
+    },
+    "repositories": [
+        { "type": "path", "url": "../../../swerve", "options": { "symlink": true } },
+        { "type": "path", "url": "../../../mini-framework", "options": { "symlink": true } }
+    ],
+    "minimum-stability": "alpha",
+    "prefer-stable": true
+}
