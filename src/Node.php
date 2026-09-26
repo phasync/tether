@@ -1,0 +1,40 @@
+<?php
+
+namespace Tether;
+
+use phasync\Context\ContextInterface;
+
+/**
+ * A mounted component in a Circuit's tree.
+ *
+ * @internal
+ */
+final class Node
+{
+    /** @var array<string, string> child identity => component id */
+    public array $children = [];
+
+    /** @var array<string, int> children placed per class without a key, in the render under way */
+    public array $positions = [];
+
+    /** @var array<string, true> identities placed in the render under way */
+    public array $placed = [];
+
+    /** @var array<string, mixed> the props last given */
+    public array $props = [];
+
+    /** The HTML of the last render. */
+    public string $html = '';
+
+    /** @var \SplQueue<array{0: string, 1: array}> events for the component's inbox: method and arguments */
+    public \SplQueue $events;
+
+    public function __construct(
+        public readonly Component $component,
+        public readonly ?Node $parent,
+        public readonly int $depth,
+        public readonly ?ContextInterface $context,
+    ) {
+        $this->events = new \SplQueue();
+    }
+}

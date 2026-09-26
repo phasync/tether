@@ -1,0 +1,18 @@
+{
+    "name": "phasync/tether-playground-demo",
+    "type": "project",
+    "require": {
+        "php": ">=8.3",
+        "phasync/tether": "@dev",
+        "phasync/swerve": "@dev",
+        "fubber/mini": "@dev"
+    },
+    "autoload": { "psr-4": { "Demo\\": "src/" } },
+    "repositories": [
+        { "type": "path", "url": "../..", "options": { "symlink": true } },
+        { "type": "path", "url": "../../../swerve", "options": { "symlink": true } },
+        { "type": "path", "url": "../../../mini-framework", "options": { "symlink": true } }
+    ],
+    "minimum-stability": "alpha",
+    "prefer-stable": true
+}
