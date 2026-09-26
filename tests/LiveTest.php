@@ -24,6 +24,12 @@ final class Probe extends Component
 
     public function run(): void
     {
+        if ('go-fails' === $this->mode) {
+            phasync::go(static function () {
+                phasync::sleep(0.01);
+                throw new RuntimeException('coroutine failed');
+            });
+        }
         if ('run-fails' === $this->mode) {
             phasync::sleep(0.01);
             throw new RuntimeException('run failed');
@@ -270,6 +276,17 @@ test('an error boundary catches a child\'s failing render(), on the first render
     $out = live(Boundary::class, ['mode' => 'render-fails'], static fn () => null);
     expect($out['crashed'])->toBeNull();
     expect($out['html'])->toBe('<div tether-id="c1">error: render failed</div>');
+});
+
+test('an error boundary catches a failing coroutine the child started', function () {
+    $out = live(Boundary::class, ['mode' => 'go-fails'], static fn () => phasync::sleep(0.05));
+    expect($out['crashed'])->toBeNull();
+    expect(end($out['frames'])['patches'][0]['html'])->toBe('<div tether-id="c1">error: coroutine failed</div>');
+});
+
+test('a failing coroutine with no boundary above crashes the tab', function () {
+    $out = live(Probe::class, ['mode' => 'go-fails'], static fn () => phasync::sleep(0.05));
+    expect($out['crashed'])->toBe('coroutine failed');
 });
 
 test('after retry(), the boundary renders a new child', function () {

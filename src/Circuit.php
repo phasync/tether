@@ -405,6 +405,16 @@ final class Circuit
         }
     }
 
+    /** @internal A coroutine of the component failed, see ComponentContext. */
+    public function coroutineFailed(string $id, \Throwable $e): void
+    {
+        if (isset($this->nodes[$id])) {
+            $this->failed($this->nodes[$id], $e);
+        } else {
+            Swerve::log()->error('Component {id} failed after it left the page: {exception}', ['id' => $id, 'exception' => $e]);
+        }
+    }
+
     /** A handler or run() of $node failed: the writer hands it on. */
     private function failed(Node $node, \Throwable $e): void
     {
