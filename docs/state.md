@@ -85,7 +85,7 @@ final class Room extends Component
         foreach (Swerve::subscribe("room:{$this->room}") as $json) {
             $this->messages[] = json_decode($json, true);
             $this->messages   = array_slice($this->messages, -200);
-            $this->stateHasChanged();
+            $this->requestRender();
         }
     }
 
@@ -124,7 +124,7 @@ final class Room extends Component
 ## Long work and streams (an LLM, for instance)
 
 A handler or `run()` may take as long as it needs; the tab stays responsive, since each runs in
-a coroutine of its own. Update state as results arrive and call `stateHasChanged()`: rendering
+a coroutine of its own. Update state as results arrive and call `requestRender()`: rendering
 is limited to 30 frames a second, so streaming a response token by token costs nothing extra.
 
 ```php
@@ -133,7 +133,7 @@ public function ask(array $form): void
     $this->answer = '';
     foreach (Llm::stream($form['question']) as $token) {  // reads an HTTP stream
         $this->answer .= $token;
-        $this->stateHasChanged();
+        $this->requestRender();
     }
 }
 ```

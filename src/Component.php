@@ -17,7 +17,7 @@ namespace Tether;
  *   with sleep() or phasync::sleep().
  * - go(): start another coroutine of the component's: cancelled when it leaves, and a failure
  *   of it is the component's.
- * - stateHasChanged(): render again soon: in the tab's next frame. Called many times in a row,
+ * - requestRender(): render again soon: in the tab's next frame. Called many times in a row,
  *   it still renders once. After an event handler, the component renders by itself.
  * - Event handlers: public methods of the component's own class, called from the browser
  *   (`tether-click="increment"`, or a hook's push()). Anyone can call them with any JSON
@@ -30,8 +30,11 @@ namespace Tether;
  */
 abstract class Component
 {
-    /** Set by the Circuit when the component is mounted. */
-    public readonly string $id;
+    /**
+     * The component's id in its tab (its root element's tether-id), set when it is mounted.
+     * Named so as to leave $id to the application's props.
+     */
+    public readonly string $tetherId;
 
     private ?Circuit $circuit = null;
 
@@ -46,9 +49,9 @@ abstract class Component
     }
 
     /** Render this component again soon. */
-    final protected function stateHasChanged(): void
+    final protected function requestRender(): void
     {
-        $this->circuit?->stateHasChanged($this);
+        $this->circuit?->requestRender($this);
     }
 
     /**
@@ -85,6 +88,16 @@ abstract class Component
     }
 
     /**
+     * Go to $url in this tab, as if a link to it was followed: with an App, a page of the App
+     * changes the page over the live connection; any other URL is a full page load. From an
+     * event handler or run().
+     */
+    final protected function navigate(string $url): void
+    {
+        $this->circuit->navigate($url);
+    }
+
+    /**
      * Start a coroutine of this component's, from an event handler, run() or another of its
      * coroutines: it is cancelled when the component leaves the page, and if it throws, the
      * component failed (see ErrorBoundary). A coroutine started with phasync::go() is the tab's
@@ -99,6 +112,6 @@ abstract class Component
     final public function attach(Circuit $circuit, string $id): void
     {
         $this->circuit = $circuit;
-        $this->id      = $id;
+        $this->tetherId = $id;
     }
 }

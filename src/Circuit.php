@@ -9,7 +9,7 @@ use Swerve\Swerve;
  * One browser tab's components: the tree, rendering, events, calls to and from the browser,
  * failures, and the components' coroutines.
  *
- * Rendering is decoupled from state changes: stateHasChanged() puts a component in the tab's
+ * Rendering is decoupled from state changes: requestRender() puts a component in the tab's
  * redraw set and raises the tab's flag. The tab's writer coroutine (run()) wakes, renders every
  * component in the set once, parents first, and sends them as one frame, with the calls to the
  * browser and the replies to it made meanwhile; then it sends nothing more until 1/$maxFps has
@@ -27,6 +27,10 @@ use Swerve\Swerve;
  * tab crashes: everything is unmounted, and $crash is told (the connection closes, the browser
  * mounts anew). Without $crash, the exception is thrown.
  *
+ * Navigation (a link, back or forward, Component::navigate()) is the writer's too: $resolve
+ * gives the URL's page. The same root class takes the new props; another replaces the root; no
+ * page (or no $resolve) is a full page load in the browser.
+ *
  * A Circuit that is not live renders once, for the page's first HTML: no coroutines, no events.
  */
 final class Circuit
@@ -36,7 +40,7 @@ final class Circuit
 
     private int $nextId = 0;
 
-    /** @var array<string, true> component ids marked by stateHasChanged() */
+    /** @var array<string, true> component ids marked by requestRender() */
     private array $dirty = [];
 
     /** The component whose render() is running, for child(). */
@@ -61,15 +65,21 @@ final class Circuit
     /** @var list<array{0: Node, 1: \Throwable}> failed handlers and run()s, for the writer */
     private array $failures = [];
 
+    /** @var list<array{0: string, 1: bool}> URLs to navigate to, and whether it is a new history entry */
+    private array $navigations = [];
+
     /**
      * @param \Closure(array): void|null      $send   sends a frame to the browser; null when not live
      * @param float                           $maxFps the most frames a second
      * @param \Closure(\Throwable): void|null $crash  told that the tab crashed
+     * @param (\Closure(string): array{0: ?Page, 1: string})|null $resolve the page at a URL, and
+     *                                                                     the URL after redirects; no page: a full page load
      */
     public function __construct(
         private readonly ?\Closure $send = null,
         private readonly float $maxFps = 30,
         private readonly ?\Closure $crash = null,
+        private readonly ?\Closure $resolve = null,
     ) {
     }
 
@@ -82,7 +92,7 @@ final class Circuit
         $next = 0.0;
         try {
             while (true) {
-                while (!$this->dirty && !$this->calls && !$this->replies && !$this->failures) {
+                while (!$this->dirty && !$this->calls && !$this->replies && !$this->failures && !$this->navigations) {
                     \phasync::awaitFlag($this);
                 }
                 $wait = $next - \microtime(true);
@@ -154,6 +164,19 @@ final class Circuit
         \phasync::raiseFlag($node);
     }
 
+    /**
+     * Go to $url: a link, the browser's back or forward ($push false: the browser's history
+     * has it already), or Component::navigate().
+     */
+    public function navigate(string $url, bool $push = true): void
+    {
+        if (null === $this->send) {
+            throw new \LogicException('navigate() is for event handlers and run(): not render() or mount(), and not before the tab is live');
+        }
+        $this->navigations[] = [$url, $push];
+        \phasync::raiseFlag($this);
+    }
+
     /** The browser's answer to a js() call. */
     public function returned(int $call, mixed $value, ?string $error): void
     {
@@ -166,13 +189,13 @@ final class Circuit
         }
     }
 
-    /** @internal see Component::stateHasChanged() */
-    public function stateHasChanged(Component $component): void
+    /** @internal see Component::requestRender() */
+    public function requestRender(Component $component): void
     {
-        if (null === $this->send || !isset($this->nodes[$component->id])) {
+        if (null === $this->send || !isset($this->nodes[$component->tetherId])) {
             return;
         }
-        $this->dirty[$component->id] = true;
+        $this->dirty[$component->tetherId] = true;
         \phasync::raiseFlag($this);
     }
 
@@ -185,9 +208,9 @@ final class Circuit
         \json_encode($args, \JSON_THROW_ON_ERROR);
         $call                  = ++$this->nextCall;
         $this->pending[$call]  = $slot = new \stdClass();
-        $this->calls[]         = ['i' => $call, 'c' => $component->id, 'f' => $function, 'a' => $args];
+        $this->calls[]         = ['i' => $call, 'c' => $component->tetherId, 'f' => $function, 'a' => $args];
         // After the component's current state: the call goes in the frame that shows it
-        $this->stateHasChanged($component);
+        $this->requestRender($component);
         \phasync::raiseFlag($this);
         try {
             while (!isset($slot->done)) {
@@ -223,7 +246,7 @@ final class Circuit
                     try {
                         return $value(...$args);
                     } finally {
-                        $this->stateHasChanged($parent);
+                        $this->requestRender($parent);
                     }
                 };
             }
@@ -231,12 +254,12 @@ final class Circuit
         $child = isset($node->children[$identity]) ? $this->nodes[$node->children[$identity]] : null;
         if (null === $child) {
             $child                     = $this->create($class, $props, $node);
-            $node->children[$identity] = $child->component->id;
+            $node->children[$identity] = $child->component->tetherId;
 
             return $this->render($child);
         }
         // Rendered again when marked, given new props, or when its first render failed
-        if (self::setProps($child, $props) || isset($this->dirty[$child->component->id]) || '' === $child->html) {
+        if (self::setProps($child, $props) || isset($this->dirty[$child->component->tetherId]) || '' === $child->html) {
             return $this->render($child);
         }
 
@@ -253,16 +276,19 @@ final class Circuit
     private function flush(): void
     {
         foreach ($this->failures as [$node, $e]) {
-            if (isset($this->nodes[$node->component->id]) && null === $this->fail($node, $e)) {
+            if (isset($this->nodes[$node->component->tetherId]) && null === $this->fail($node, $e)) {
                 $this->failures = [];
 
                 return;
             }
         }
         $this->failures = [];
+        $frame          = ['t' => 'frame'];
+        if ($this->navigations && !$this->navigateTo($frame)) {
+            return;
+        }
         $marked = \array_keys($this->dirty);
         \usort($marked, fn ($a, $b) => $this->nodes[$a]->depth <=> $this->nodes[$b]->depth);
-        $frame = ['t' => 'frame'];
         foreach ($marked as $id) {
             // Rendered with its parent already, or unmounted meanwhile
             if (isset($this->dirty[$id], $this->nodes[$id]) && null !== ($patch = $this->patch($this->nodes[$id]))) {
@@ -281,6 +307,52 @@ final class Circuit
     }
 
     /**
+     * The navigations asked for, in order, into $frame: the last one's URL and title, and a new
+     * root's patch. False when the frame is done: a full page load, or a crash.
+     */
+    private function navigateTo(array &$frame): bool
+    {
+        [$navigations, $this->navigations] = [$this->navigations, []];
+        foreach ($navigations as [$url, $push]) {
+            [$page, $url] = null === $this->resolve ? [null, $url] : ($this->resolve)($url);
+            if (null === $page || null === $this->root) {
+                ($this->send)(['t' => 'frame', 'nav' => ['load' => $url]]);
+
+                return false;
+            }
+            $frame['nav'] = ['u' => $url, 't' => $page->title, 'p' => $push || ($frame['nav']['p'] ?? false)];
+            $old          = $this->root;
+            if ($page->class === $old->component::class) {
+                try {
+                    if (self::setProps($old, $page->props)) {
+                        $this->dirty[$old->component->tetherId] = true;
+                    }
+                } catch (\InvalidArgumentException $e) {
+                    $this->fail(null, $e);
+
+                    return false;
+                }
+                continue;
+            }
+            try {
+                $this->root = $this->create($page->class, $page->props, null);
+            } catch (RenderFailure $failure) {
+                $this->fail(null, $failure->getPrevious());
+
+                return false;
+            }
+            $this->unmount($old);
+            if (null === ($patch = $this->patch($this->root))) {
+                return false;
+            }
+            // The new root takes the place of the old one's element
+            $frame['patches'] = [['id' => $old->component->tetherId] + $patch];
+        }
+
+        return true;
+    }
+
+    /**
      * Render a component for a patch. When it, or a component it renders, fails, the nearest
      * error boundary above that one catches and renders instead; a boundary that fails to
      * render past it hands on to the next. Null when there was none, and the tab crashed.
@@ -293,13 +365,13 @@ final class Circuit
         while (true) {
             $this->fresh = [];
             try {
-                return ['id' => $node->component->id, 'html' => $this->render($node), 'fresh' => \array_keys($this->fresh)];
+                return ['id' => $node->component->tetherId, 'html' => $this->render($node), 'fresh' => \array_keys($this->fresh)];
             } catch (RenderFailure $failure) {
                 $node = $this->fail($failure->node, $failure->getPrevious(), $skip);
                 if (null === $node) {
                     return null;
                 }
-                $skip[$node->component->id] = true;
+                $skip[$node->component->tetherId] = true;
             }
         }
     }
@@ -313,11 +385,11 @@ final class Circuit
     private function fail(?Node $node, \Throwable $e, array $skip = []): ?Node
     {
         for ($boundary = $node?->parent; null !== $boundary; $boundary = $boundary->parent) {
-            $id = $boundary->component->id;
+            $id = $boundary->component->tetherId;
             if ($boundary->component instanceof ErrorBoundary && !isset($skip[$id]) && isset($this->nodes[$id])) {
                 Swerve::log()->error('{component} failed, {boundary} catches it: {exception}', ['component' => $node->component::class, 'boundary' => $boundary->component::class, 'exception' => $e]);
                 $boundary->component->catch($e);
-                $this->stateHasChanged($boundary->component);
+                $this->requestRender($boundary->component);
 
                 return $boundary;
             }
@@ -386,7 +458,7 @@ final class Circuit
 
                         return;
                     }
-                    $this->stateHasChanged($node->component);
+                    $this->requestRender($node->component);
                 });
             }
             \phasync::awaitFlag($node);
@@ -396,11 +468,11 @@ final class Circuit
     /** @internal see Component::go() */
     public function go(Component $component, \Closure $fn): \Fiber
     {
-        if (null === $this->send || !isset($this->nodes[$component->id])) {
+        if (null === $this->send || !isset($this->nodes[$component->tetherId])) {
             throw new \LogicException('go() is for event handlers and run(): not render() or mount(), and not before the tab is live');
         }
 
-        return $this->start($this->nodes[$component->id], $fn);
+        return $this->start($this->nodes[$component->tetherId], $fn);
     }
 
     /**
@@ -412,7 +484,7 @@ final class Circuit
         return \phasync::go(function () use ($node, $fn) {
             // Recorded as it starts, before go() returns: go() may suspend its caller, which
             // may be unmounted meanwhile. Started for a component that left: it doesn't run.
-            if (($this->nodes[$node->component->id] ?? null) !== $node) {
+            if (($this->nodes[$node->component->tetherId] ?? null) !== $node) {
                 return null;
             }
             $node->fibers[\Fiber::getCurrent()] = true;
@@ -460,7 +532,7 @@ final class Circuit
         } finally {
             $this->rendering = $outer;
         }
-        $html = '<' . $m[1] . ' tether-id="' . $node->component->id . '"' . \substr($html, \strlen($m[0]));
+        $html = '<' . $m[1] . ' tether-id="' . $node->component->tetherId . '"' . \substr($html, \strlen($m[0]));
         // Children no longer placed leave
         foreach ($node->children as $identity => $childId) {
             if (!isset($node->placed[$identity])) {
@@ -469,8 +541,8 @@ final class Circuit
             }
         }
         $node->html = $html;
-        unset($this->dirty[$node->component->id]);
-        $this->fresh[$node->component->id] = true;
+        unset($this->dirty[$node->component->tetherId]);
+        $this->fresh[$node->component->tetherId] = true;
 
         return $html;
     }
@@ -480,7 +552,7 @@ final class Circuit
         foreach ($node->children as $childId) {
             $this->unmount($this->nodes[$childId]);
         }
-        $id = $node->component->id;
+        $id = $node->component->tetherId;
         unset($this->nodes[$id], $this->dirty[$id]);
         foreach ($node->fibers as $fiber => $_) {
             if ($fiber !== \Fiber::getCurrent() && !$fiber->isTerminated()) {
@@ -497,7 +569,7 @@ final class Circuit
     {
         $changed = false;
         foreach ($props as $name => $value) {
-            if (!\property_exists($node->component, $name) || !(new \ReflectionProperty($node->component, $name))->isPublic() || 'id' === $name) {
+            if (!\property_exists($node->component, $name) || !(new \ReflectionProperty($node->component, $name))->isPublic() || 'tetherId' === $name) {
                 throw new \InvalidArgumentException(\sprintf('%s has no public property $%s to take the prop', $node->component::class, $name));
             }
             if (!\array_key_exists($name, $node->props) || (!$value instanceof \Closure && $node->props[$name] !== $value)) {

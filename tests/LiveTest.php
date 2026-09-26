@@ -191,7 +191,7 @@ test('only the component\'s own public methods are handlers', function (string $
     live(Probe::class, [], static function (Circuit $circuit) use ($method) {
         expect(fn () => $circuit->event('c1', $method, []))->toThrow(InvalidArgumentException::class);
     });
-})->with(['render', 'mount', 'run', 'stateHasChanged', 'js', 'child', 'attach', '__construct', 'nope']);
+})->with(['render', 'mount', 'run', 'requestRender', 'js', 'child', 'attach', '__construct', 'nope']);
 
 test('variadic handlers take any number of arguments of their type', function () {
     $out = live(Probe::class, [], static function (Circuit $circuit) {

@@ -13,7 +13,7 @@ final class Clock extends Component
     {
         while (true) {
             $this->time = date('H:i:s');
-            $this->stateHasChanged();
+            $this->requestRender();
             \phasync::sleep(1);
         }
     }

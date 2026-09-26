@@ -75,7 +75,7 @@ with its own children. Give children rendered in a loop a key, so each keeps its
 list changes.
 
 A child is rendered again when it is new, when its props changed, or when it asked to be
-(`stateHasChanged()`). Otherwise the parent's frame reuses its last HTML and the browser leaves
+(`requestRender()`). Otherwise the parent's frame reuses its last HTML and the browser leaves
 its part of the page alone: focus, selection, a half-typed input survive a parent's update.
 
 **Telling the parent something**: pass a closure. When the child calls it, the parent renders
@@ -144,7 +144,7 @@ final class Clock extends Component
     {
         while (true) {
             $this->time = date('H:i:s');
-            $this->stateHasChanged();
+            $this->requestRender();
             sleep(1); // with phasync-ext; or phasync::sleep(1)
         }
     }
@@ -165,10 +165,10 @@ Cancellation arrives as a `phasync\CancelledException` at the next wait. Let it 
 and carrying on would keep a component running that is no longer on the page. Use `finally`
 for cleanup.
 
-## stateHasChanged()
+## requestRender()
 
 Event handlers render their component by themselves when they return. Anywhere else (in
-`run()`, in a coroutine, in a callback) call `$this->stateHasChanged()` after changing state.
+`run()`, in a coroutine, in a callback) call `$this->requestRender()` after changing state.
 
 It does not render at once: it marks the component for the tab's next frame. Each tab has one
 writer coroutine that wakes when something is marked, renders every marked component once,

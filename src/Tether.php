@@ -6,12 +6,12 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Swerve\Http\Message\Response;
-use Swerve\Swerve;
 use Tether\Transport\WebSocket;
 
 /**
- * Tether's entry points.
+ * One live page in an application: Tether::page() as a route's response, and this middleware
+ * for the client's files and the live connection. For live pages with navigation between them,
+ * see App.
  *
  * - page(): a page whose root is a component, as a response: its HTML rendered once, and the
  *   browser client, which then connects and mounts it live.
@@ -30,11 +30,6 @@ use Tether\Transport\WebSocket;
  */
 final class Tether implements MiddlewareInterface
 {
-    private const ASSETS = [
-        '/_tether/tether.js'    => 'tether.js',
-        '/_tether/idiomorph.js' => 'idiomorph.min.js',
-    ];
-
     /**
      * @param list<string>                                                 $origins other origins whose pages may open live
      *                                                                              connections, such as "https://app.example.com"
@@ -54,50 +49,27 @@ final class Tether implements MiddlewareInterface
      */
     public static function page(string $class, array $props = [], string $title = '', string $head = ''): ResponseInterface
     {
-        $html  = (new Circuit())->mount($class, $props);
-        $title = \htmlspecialchars($title);
-        $mount = \json_encode(['c' => $class, 'p' => $props, 's' => self::sign($class, $props)], \JSON_THROW_ON_ERROR | \JSON_HEX_TAG | \JSON_HEX_AMP);
+        $html = (new Circuit())->mount($class, $props);
 
-        return new Response(<<<HTML
-            <!doctype html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>{$title}</title>
-            <script src="/_tether/idiomorph.js" defer></script>
-            <script src="/_tether/tether.js" defer></script>
-            {$head}
-            </head>
-            <body>
-            {$html}
-            <script type="application/json" id="tether-mount">{$mount}</script>
-            </body>
-            </html>
-            HTML, ['Content-Type' => 'text/html; charset=utf-8']);
+        return Live::document($html, ['live' => '/_tether/live', 'c' => $class, 'p' => $props, 's' => self::sign($class, $props)], $title, $head, '/_tether');
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $path = $request->getUri()->getPath();
-        if (isset(self::ASSETS[$path])) {
-            return new Response(\fopen(\dirname(__DIR__) . '/resources/' . self::ASSETS[$path], 'r'), ['Content-Type' => 'text/javascript; charset=utf-8', 'Cache-Control' => 'no-cache']);
+        if (\str_starts_with($path, '/_tether/') && null !== ($asset = Live::asset(\substr($path, 9)))) {
+            return $asset;
         }
         if ('/_tether/live' === $path) {
-            $origin = $request->getHeaderLine('Origin');
-            if ('' !== $origin && !\in_array($origin, $this->origins, true) && \strtolower((string) \preg_replace('#^[a-z][a-z0-9+.-]*://#i', '', $origin)) !== \strtolower($request->getHeaderLine('Host'))) {
-                return new Response('A page from another site can not open a live connection', ['Content-Type' => 'text/plain'], 403);
-            }
-
-            return WebSocket::upgrade($request, fn (WebSocket $ws) => $this->live($ws, $request));
+            return Live::refuseOrigin($request, $this->origins) ?? WebSocket::upgrade($request, fn (WebSocket $ws) => $this->live($ws, $request));
         }
 
         return $handler->handle($request);
     }
 
     /**
-     * A tab's live connection: the first message mounts the page's root, the rest are events
-     * and the results of js() calls.
+     * A tab's live connection: the first message says what to mount (signed), the rest are
+     * events and the results of js() calls.
      */
     private function live(WebSocket $ws, ServerRequestInterface $request): void
     {
@@ -109,50 +81,8 @@ final class Tether implements MiddlewareInterface
 
             return;
         }
-        $tab = static fn () => self::tab($ws, $mount);
+        $tab = static fn () => Live::tab($ws, new Page($mount['c'], $mount['p']), null);
         null === $this->enter ? $tab() : ($this->enter)($request, $tab);
-    }
-
-    /**
-     * A live tab: mount its root, then events and the results of js() calls, until it closes.
-     *
-     * @param array{c: class-string<Component>, p: array} $mount
-     */
-    private static function tab(WebSocket $ws, array $mount): void
-    {
-        $circuit = new Circuit(
-            send: static fn (array $frame) => $ws->send(\json_encode($frame, \JSON_THROW_ON_ERROR)),
-            crash: static function (\Throwable $e) use ($ws) {
-                Swerve::log()->error('Tether: the tab failed, and starts over: {exception}', ['exception' => $e]);
-                $ws->close(1011);
-            },
-        );
-        try {
-            if (null === ($html = $circuit->mount($mount['c'], $mount['p']))) {
-                return;
-            }
-            $ws->send(\json_encode(['t' => 'mount', 'html' => $html], \JSON_THROW_ON_ERROR));
-            $writer = \phasync::go($circuit->run(...));
-            while (null !== ($message = $ws->receive())) {
-                $message = \json_decode($message, true);
-                if (\is_array($message) && 'return' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
-                    $circuit->returned($message['i'], $message['v'] ?? null, isset($message['e']) ? (string) $message['e'] : null);
-                } elseif (\is_array($message) && \is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_int($message['r'] ?? 0)) {
-                    try {
-                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null);
-                    } catch (\InvalidArgumentException $e) {
-                        Swerve::log()->warning('Tether: {message}', ['message' => $e->getMessage()]);
-                    }
-                }
-            }
-        } finally {
-            // The tab is gone, or the worker drains: the writer and every component's coroutines
-            // are cancelled
-            if (isset($writer) && !$writer->isTerminated()) {
-                \phasync::cancel($writer);
-            }
-            $circuit->close();
-        }
     }
 
     private static function sign(string $class, array $props): string

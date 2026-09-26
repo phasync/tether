@@ -15,11 +15,16 @@
 //   it returned. The server calls methods of it with js('Name.method', ...).
 // - Calls: the server's js() runs a hook method, or a function by its path from window, and
 //   gets its result (a promise is awaited).
+// - Navigation (an App's pages): once live, a click on a link below the App, and the browser's
+//   back and forward, go over the connection; the frame that answers says the new URL and
+//   title, or that the browser should load the URL itself.
 // - The connection drops (a reload, a restart, the network, a crash): hooks are destroyed, it
-//   reconnects, and the page's components mount again from their props.
+//   reconnects, and the page's components mount again: from their props, or from the URL.
 (() => {
   'use strict';
   const mount = JSON.parse(document.getElementById('tether-mount').textContent);
+  const app = 'base' in mount; // an App's page: navigation goes over the connection
+  const here = () => location.pathname + location.search;
   const hooks = {};
   const instances = new Map(); // element => hook instance, while live
   const waiting = new Map(); // reply id => {resolve, reject}
@@ -29,11 +34,24 @@
   let nextReply = 0;
 
   function connect() {
-    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/_tether/live`);
-    socket.onopen = () => socket.send(JSON.stringify(mount));
+    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${mount.live}`);
+    socket.onopen = () => socket.send(JSON.stringify(app ? { u: here() } : mount));
     socket.onmessage = (message) => {
       const frame = JSON.parse(message.data);
       const morphed = new Set();
+      if (frame.nav?.load) {
+        location.assign(frame.nav.load);
+        return;
+      }
+      if (frame.nav) {
+        document.title = frame.nav.t;
+        if (frame.nav.p) {
+          history.pushState(null, '', frame.nav.u);
+          window.scrollTo(0, 0);
+        } else {
+          history.replaceState(null, '', frame.nav.u);
+        }
+      }
       if (frame.t === 'mount') {
         // The whole tree, from a fresh mount: every component's HTML is new
         backoff = 250;
@@ -207,6 +225,29 @@
       send(element, element.getAttribute(attribute), argsOf(element, event));
     });
   };
+  // An App's links: below the App, same window, no modifier keys; not while offline
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest?.('a[href]');
+    if (!app || !live || !link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+      || link.hasAttribute('download') || link.hasAttribute('tether-reload') || link.hasAttribute('tether-click') || (link.target && link.target !== '_self')) {
+      return;
+    }
+    const url = new URL(link.href, location.href);
+    const below = url.pathname === mount.base || url.pathname.startsWith(`${mount.base}/`);
+    if (url.origin !== location.origin || !below || (url.pathname + url.search === here() && url.hash)) {
+      return;
+    }
+    event.preventDefault();
+    socket.send(JSON.stringify({ t: 'navigate', u: url.pathname + url.search, p: true }));
+  });
+  window.addEventListener('popstate', () => {
+    if (app && live) {
+      socket.send(JSON.stringify({ t: 'navigate', u: here(), p: false }));
+    } else if (app) {
+      location.reload();
+    }
+  });
+
   listen('click', 'tether-click', () => []);
   listen('input', 'tether-input', (element) => [element.value]);
   listen('change', 'tether-change', (element) => [element.type === 'checkbox' ? element.checked : element.value]);
