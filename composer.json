@@ -1,6 +1,6 @@
 {
     "name": "phasync/tether",
-    "description": "Live server-side components for PHP: each browser tab is tethered to its component state on the server. Built on the mini framework and the swerve application server.",
+    "description": "Live server-side components for PHP: each browser tab is tethered to its component state on the server. For any PSR-15 application on the swerve application server.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -12,11 +12,11 @@
     "require": {
         "php": ">=8.3",
         "phasync/phasync": "^2.0.0-alpha6",
-        "phasync/swerve": "@dev",
-        "fubber/mini": "@dev"
+        "phasync/swerve": "@dev"
     },
     "require-dev": {
-        "pestphp/pest": "^3.0 || ^4.0"
+        "pestphp/pest": "^3.0 || ^4.0",
+        "fubber/mini": "@dev"
     },
     "autoload": {
         "psr-4": {

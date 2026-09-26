@@ -13,8 +13,10 @@ namespace Tether;
  * - render(): exactly one root element; Tether marks it with the component's id. Children are
  *   placed with child().
  * - run(): optional; runs in a coroutine of its own while the component is on the page, and is
- *   cancelled when it leaves (its parent stops rendering it, or the browser tab closes). Every
- *   coroutine it starts is cancelled with it. Wait with sleep() or phasync::sleep().
+ *   cancelled when it leaves (its parent stops rendering it, or the browser tab closes). Wait
+ *   with sleep() or phasync::sleep().
+ * - go(): start another coroutine of the component's: cancelled when it leaves, and a failure
+ *   of it is the component's.
  * - stateHasChanged(): render again soon: in the tab's next frame. Called many times in a row,
  *   it still renders once. After an event handler, the component renders by itself.
  * - Event handlers: public methods of the component's own class, called from the browser
@@ -80,6 +82,17 @@ abstract class Component
     final protected function js(string $function, mixed ...$args): mixed
     {
         return $this->circuit->js($this, $function, \array_values($args));
+    }
+
+    /**
+     * Start a coroutine of this component's, from an event handler, run() or another of its
+     * coroutines: it is cancelled when the component leaves the page, and if it throws, the
+     * component failed (see ErrorBoundary). A coroutine started with phasync::go() is the tab's
+     * work instead, not the component's.
+     */
+    final protected function go(\Closure $fn): \Fiber
+    {
+        return $this->circuit->go($this, $fn);
     }
 
     /** @internal */

@@ -25,7 +25,7 @@ final class Probe extends Component
     public function run(): void
     {
         if ('go-fails' === $this->mode) {
-            phasync::go(static function () {
+            $this->go(static function () {
                 phasync::sleep(0.01);
                 throw new RuntimeException('coroutine failed');
             });
@@ -56,9 +56,9 @@ final class Probe extends Component
         return $this->js('Probe.answer', 42);
     }
 
-    public function whoAmI(): array
+    public function whoAmI(): ?string
     {
-        return [Mini::$mini->getRequestScope() === phasync::getContext() ? 'own' : 'shared', \mini\request()->getQueryParams()['tab'] ?? null];
+        return \mini\request()->getQueryParams()['tab'] ?? null;
     }
 
     public function render(): string
@@ -284,6 +284,23 @@ test('an error boundary catches a failing coroutine the child started', function
     expect(end($out['frames'])['patches'][0]['html'])->toBe('<div tether-id="c1">error: coroutine failed</div>');
 });
 
+test('a coroutine started with go() is cancelled when its component leaves; one started with phasync::go() is not the component\'s', function () {
+    $ticks = ['go' => 0, 'phasync' => 0];
+    $out   = live(Boundary::class, [], static function (Circuit $circuit) use (&$ticks) {
+        $probe = (new ReflectionProperty(Circuit::class, 'nodes'))->getValue($circuit)['c2']->component;
+        (fn () => $this->go(static function () use (&$ticks) { while (true) { ++$ticks['go']; phasync::sleep(0.005); } }))->call($probe);
+        $other = phasync::go(static function () use (&$ticks) { try { while (true) { ++$ticks['phasync']; phasync::sleep(0.005); } } catch (phasync\CancelledException) {} });
+        $circuit->event('c2', 'fail', []);  // the boundary shows its error: the probe leaves
+        phasync::sleep(0.03);
+        $before = $ticks;
+        phasync::sleep(0.03);
+        phasync::cancel($other);
+
+        return [$ticks['go'] > $before['go'], $ticks['phasync'] > $before['phasync']];
+    });
+    expect($out['result'])->toBe([false, true]);
+});
+
 test('a failing coroutine with no boundary above crashes the tab', function () {
     $out = live(Probe::class, ['mode' => 'go-fails'], static fn () => phasync::sleep(0.05));
     expect($out['crashed'])->toBe('coroutine failed');
@@ -309,10 +326,10 @@ test('a boundary\'s catch() is not an event handler', function () {
     });
 });
 
-test('every component coroutine shares the tab\'s request scope, and sees the tab\'s request', function () {
+test('with mini\'s RequestDispatcher::within() as enter, component coroutines see the tab\'s request', function () {
     $out = live(Probe::class, [], static function (Circuit $circuit) {
         $circuit->event('c1', 'whoAmI', [], reply: 1);
         phasync::sleep(0.02);
     });
-    expect(replies($out['frames'])[1]['v'])->toBe(['shared', 't1']);
+    expect(replies($out['frames'])[1]['v'])->toBe('t1');
 });

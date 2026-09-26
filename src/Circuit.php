@@ -18,8 +18,10 @@ use Swerve\Swerve;
  * renders is rendered as part of it, if it was marked or is new; otherwise the parent's frame
  * keeps its last HTML and the browser leaves the child's DOM alone.
  *
- * Each component has a phasync context of its own (ComponentContext): unmounting cancels its
- * coroutines, its children's first. They all share the tab's request scope ($scope).
+ * A component's coroutines (its inbox, run(), handlers, and those it starts with go()) are
+ * tracked by the Circuit: unmounting cancels them, its children's first, and a failure of any
+ * of them is the component's. They run in the phasync context of the tab's connection, like
+ * any coroutine of a request.
  *
  * A failure goes to the nearest ErrorBoundary above the component that failed. With none, the
  * tab crashes: everything is unmounted, and $crash is told (the connection closes, the browser
@@ -29,9 +31,6 @@ use Swerve\Swerve;
  */
 final class Circuit
 {
-    /** The request scope of the tab's coroutines: the phasync context the Circuit was made in. */
-    public readonly ?object $scope;
-
     /** @var array<string, Node> by component id */
     private array $nodes = [];
 
@@ -72,7 +71,6 @@ final class Circuit
         private readonly float $maxFps = 30,
         private readonly ?\Closure $crash = null,
     ) {
-        $this->scope = null !== $send ? \phasync::getContext() : null;
     }
 
     /**
@@ -129,7 +127,7 @@ final class Circuit
 
     /**
      * An event from the browser: queue it for the component's inbox, which calls the handler
-     * in the component's context and renders the component. An unknown component is one the
+     * in a coroutine of the component's and renders the component. An unknown component is one the
      * page no longer shows: ignored. With $reply, the browser waits for the handler's return
      * value (a hook's push()).
      *
@@ -341,7 +339,7 @@ final class Circuit
         $component = new $class();
         $id        = 'c' . ++$this->nextId;
         $component->attach($this, $id);
-        $node = new Node($component, $parent, null === $parent ? 0 : $parent->depth + 1, null === $this->send ? null : new ComponentContext($this, $id));
+        $node = new Node($component, $parent, null === $parent ? 0 : $parent->depth + 1);
         self::setProps($node, $props);
         try {
             $component->mount();
@@ -351,10 +349,8 @@ final class Circuit
             throw new RenderFailure($node, $e);
         }
         $this->nodes[$id] = $node;
-        if (null !== $node->context) {
-            // The one coroutine started with the component's context (a phasync context is used
-            // once): the others are started from it, and inherit it
-            \phasync::go(fn () => $this->inbox($node), context: $node->context);
+        if (null !== $this->send) {
+            $this->start($node, fn () => $this->inbox($node));
         }
 
         return $node;
@@ -368,20 +364,12 @@ final class Circuit
     {
         $component = $node->component;
         if (Component::class !== (new \ReflectionMethod($component, 'run'))->getDeclaringClass()->getName()) {
-            \phasync::go(function () use ($node) {
-                try {
-                    $node->component->run();
-                } catch (CancelledException $e) {
-                    throw $e;
-                } catch (\Throwable $e) {
-                    $this->failed($node, $e);
-                }
-            });
+            $this->start($node, $node->component->run(...));
         }
         while (true) {
             while (!$node->events->isEmpty()) {
                 [$method, $args, $reply] = $node->events->dequeue();
-                \phasync::go(function () use ($node, $method, $args, $reply) {
+                $this->start($node, function () use ($node, $method, $args, $reply) {
                     try {
                         $value = $node->component->$method(...$args);
                         if (null !== $reply) {
@@ -405,17 +393,42 @@ final class Circuit
         }
     }
 
-    /** @internal A coroutine of the component failed, see ComponentContext. */
-    public function coroutineFailed(string $id, \Throwable $e): void
+    /** @internal see Component::go() */
+    public function go(Component $component, \Closure $fn): \Fiber
     {
-        if (isset($this->nodes[$id])) {
-            $this->failed($this->nodes[$id], $e);
-        } else {
-            Swerve::log()->error('Component {id} failed after it left the page: {exception}', ['id' => $id, 'exception' => $e]);
+        if (null === $this->send || !isset($this->nodes[$component->id])) {
+            throw new \LogicException('go() is for event handlers and run(): not render() or mount(), and not before the tab is live');
         }
+
+        return $this->start($this->nodes[$component->id], $fn);
     }
 
-    /** A handler or run() of $node failed: the writer hands it on. */
+    /**
+     * A coroutine of $node's: cancelled when it is unmounted, and its failure is the
+     * component's. Cancelled, it ends quietly.
+     */
+    private function start(Node $node, \Closure $fn): \Fiber
+    {
+        return \phasync::go(function () use ($node, $fn) {
+            // Recorded as it starts, before go() returns: go() may suspend its caller, which
+            // may be unmounted meanwhile. Started for a component that left: it doesn't run.
+            if (($this->nodes[$node->component->id] ?? null) !== $node) {
+                return null;
+            }
+            $node->fibers[\Fiber::getCurrent()] = true;
+            try {
+                return $fn();
+            } catch (CancelledException) {
+                return null;
+            } catch (\Throwable $e) {
+                $this->failed($node, $e);
+
+                return null;
+            }
+        });
+    }
+
+    /** A coroutine of $node's failed: the writer hands it on. */
     private function failed(Node $node, \Throwable $e): void
     {
         $this->failures[] = [$node, $e];
@@ -469,11 +482,9 @@ final class Circuit
         }
         $id = $node->component->id;
         unset($this->nodes[$id], $this->dirty[$id]);
-        if (null !== $node->context) {
-            foreach ($node->context->getFibers() as $fiber => $_) {
-                if ($fiber !== \Fiber::getCurrent() && !$fiber->isTerminated()) {
-                    \phasync::cancel($fiber);
-                }
+        foreach ($node->fibers as $fiber => $_) {
+            if ($fiber !== \Fiber::getCurrent() && !$fiber->isTerminated()) {
+                \phasync::cancel($fiber);
             }
         }
     }

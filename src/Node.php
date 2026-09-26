@@ -2,8 +2,6 @@
 
 namespace Tether;
 
-use phasync\Context\ContextInterface;
-
 /**
  * A mounted component in a Circuit's tree.
  *
@@ -29,12 +27,15 @@ final class Node
     /** @var \SplQueue<array{0: string, 1: array, 2: ?int}> events for the component's inbox: method, arguments, reply id */
     public \SplQueue $events;
 
+    /** @var \WeakMap<\Fiber, true> the component's coroutines: its inbox, run(), handlers, go() */
+    public \WeakMap $fibers;
+
     public function __construct(
         public readonly Component $component,
         public readonly ?Node $parent,
         public readonly int $depth,
-        public readonly ?ContextInterface $context,
     ) {
         $this->events = new \SplQueue();
+        $this->fibers = new \WeakMap();
     }
 }

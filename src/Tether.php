@@ -2,7 +2,6 @@
 
 namespace Tether;
 
-use mini\Dispatcher\RequestDispatcher;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -23,10 +22,11 @@ use Tether\Transport\WebSocket;
  * worker: they are signed, with TETHER_SECRET, or else a key kept in the system's temporary
  * directory.
  *
- * The live connection is the tab's request, for as long as the tab is open: with mini,
- * `mini\request()`, `$_COOKIE`, `$_SESSION` and the Scoped services are the tab's in every
- * component, and a browser page from another site can not open one (its Origin must be this
- * host, or one of $origins).
+ * The live connection is the tab's request (the WebSocket upgrade, with the tab's cookies),
+ * for as long as the tab is open: every component coroutine runs in its phasync context.
+ * $enter lets the framework make it the current request for them: with mini,
+ * `new Tether(enter: RequestDispatcher::within(...))`. A browser page from another site can
+ * not open one (its Origin must be this host, or one of $origins).
  */
 final class Tether implements MiddlewareInterface
 {
@@ -36,10 +36,12 @@ final class Tether implements MiddlewareInterface
     ];
 
     /**
-     * @param list<string> $origins other origins whose pages may open live connections, such as
-     *                              "https://app.example.com"
+     * @param list<string>                                                 $origins other origins whose pages may open live
+     *                                                                              connections, such as "https://app.example.com"
+     * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter   runs a tab (the closure) as the work of its
+     *                                                                              request, after the framework handled it
      */
-    public function __construct(private readonly array $origins = [])
+    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null)
     {
     }
 
@@ -87,7 +89,7 @@ final class Tether implements MiddlewareInterface
                 return new Response('A page from another site can not open a live connection', ['Content-Type' => 'text/plain'], 403);
             }
 
-            return WebSocket::upgrade($request, static fn (WebSocket $ws) => self::live($ws, $request));
+            return WebSocket::upgrade($request, fn (WebSocket $ws) => $this->live($ws, $request));
         }
 
         return $handler->handle($request);
@@ -97,17 +99,18 @@ final class Tether implements MiddlewareInterface
      * A tab's live connection: the first message mounts the page's root, the rest are events
      * and the results of js() calls.
      */
-    private static function live(WebSocket $ws, ServerRequestInterface $request): void
+    private function live(WebSocket $ws, ServerRequestInterface $request): void
     {
-        // The browser speaks first once it has the 101 response, so after mini's handle()
-        // returned: from here on, the tab is the request's work
+        // The browser speaks first once it has the 101 response, so after the framework handled
+        // the request and returned it: from here on, the tab is the request's work
         $mount = \json_decode((string) $ws->receive(), true);
         if (!\is_array($mount) || !\is_string($mount['c'] ?? null) || !\is_array($mount['p'] ?? null) || !\hash_equals(self::sign($mount['c'], $mount['p']), (string) ($mount['s'] ?? ''))) {
             $ws->close(1008);
 
             return;
         }
-        RequestDispatcher::within($request, static fn () => self::tab($ws, $mount));
+        $tab = static fn () => self::tab($ws, $mount);
+        null === $this->enter ? $tab() : ($this->enter)($request, $tab);
     }
 
     /**
