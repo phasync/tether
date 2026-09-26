@@ -25,7 +25,23 @@ public function send(array $form): void
 
 - A handler runs in a coroutine of its own: it may wait (`phasync::sleep()`, I/O, `js()`)
   without holding up anything else. Events for one component are started in the order they
-  came, and don't wait for each other.
+  came, and don't wait for each other: a second click while the first handler still waits runs
+  alongside it. Guard handlers that must not overlap (a Send button, a question to an LLM):
+
+  ```php
+  public function ask(array $form): void
+  {
+      if ($this->busy) {
+          return;
+      }
+      $this->busy = true;
+      try {
+          // ...
+      } finally {
+          $this->busy = false;
+      }
+  }
+  ```
 - When it returns, its component renders.
 - A click on a link with `tether-click` doesn't follow the link; `tether-key` keys don't type
   (Enter in a textarea sends, and adds no line).
@@ -36,6 +52,12 @@ public function send(array $form): void
 For an input you type into, keep the draft on the server with `tether-input` and act on it with
 `tether-keydown`/`tether-key="Enter"` or a submit. The browser keeps focus and the cursor while
 the component renders.
+
+`tether-input` sends every keystroke. That is cheap (one small message, and at most 30 frames a
+second back), but work a handler starts from it should be limited on the server: publish "is
+typing" at most every few seconds, search when the user pauses (sleep in a coroutine started
+with `go()`, and let the next keystroke cancel it). A form with `tether-submit` sends nothing
+until it is submitted.
 
 ## Hooks: the browser side of a component
 
@@ -74,6 +96,9 @@ Tether.hook('Call', {
   and returns a promise of what the handler returned (JSON). It rejects when the handler fails
   or is not allowed, and when the connection closes.
 - Register hooks before the tab goes live: in a script loaded with `defer` in the page's head.
+- A hook's `mounted()` is also how JavaScript (and a browser test) knows the tab is live.
+  While a lost connection is being restored, `<html>` has the attribute `tether-offline`; it is
+  not set before the first connection.
 
 ## js(): calling the browser from the server
 
@@ -92,8 +117,9 @@ public function measure(): void
   it (the first one); any other name is a path from `window`.
 - The call reaches the browser in the frame after the component's current state: the page
   already shows what the handler changed when the function runs (render first, then scroll).
-- From event handlers and `run()` only; not from `render()` or `mount()`.
-- Not interested in the result? Don't wait for it: `phasync::go(fn () => $this->js('...'))`.
+- From event handlers, `run()` and the component's other coroutines (`go()`); not from
+  `render()` or `mount()`.
+- Not interested in the result? Don't wait for it: `$this->go(fn () => $this->js('...'))`.
 
 ## tether-ignore: elements the browser owns
 
@@ -115,16 +141,27 @@ The server passes offers, answers and candidates between two tabs over
 ```php
 final class Call extends Component
 {
-    public string $me = '';
+    public string $peer = '';      // who to call: a prop, from the page
 
-    public string $peer = '';
+    private string $me = '';
+
+    public function mount(): void
+    {
+        $this->me = $_SESSION['user'];  // who I am: from the session, never from the browser
+    }
 
     public function run(): void
     {
         foreach (Swerve\Swerve::subscribe("call:{$this->me}") as $message) {
             $signal = json_decode($message, true);
-            phasync::go(fn () => $this->js('Call.signal', $signal)); // don't wait
+            $this->go(fn () => $this->js('Call.signal', $signal)); // don't wait
         }
+    }
+
+    // <button tether-click="start">Call</button>: the browser makes the offer
+    public function start(): void
+    {
+        $this->js('Call.call');
     }
 
     // from the hook: this.push('signal', {type: 'offer', sdp: ...})

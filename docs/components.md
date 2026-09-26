@@ -66,7 +66,8 @@ final class TodoList extends Component
 
 A child's props are its public properties, set by the parent on every render:
 `$this->child(TodoItem::class, ['text' => $text])` sets `$item->text`. A prop that is not a
-public property of the child is an error.
+public property of the child is an error. `$tetherId` is taken: it is the component's id in the
+tab (its root element's `tether-id`).
 
 A child is identified by its class and **key**, or, without a key, by its class and position
 among its siblings of that class. It keeps its state (its own properties, its coroutines) for
@@ -94,18 +95,20 @@ public function remove(): void   // an event handler
 }
 ```
 
-The page's root component gets its props from `Tether::page()`. Those must be JSON: they go to
-the browser and come back, signed, when the tab connects.
+The page's root component gets its props from its route's `Page` (an [App](apps.md)), or from
+`Tether::page()`; for `Tether::page()` they must be JSON: they go to the browser and come back,
+signed, when the tab connects.
 
 ## Lifecycle
 
-1. **First render.** The route calls `Tether::page()`: the root and its children are created,
+1. **First render.** The page is requested over HTTP: the root and its children are created,
    `mount()` runs for each, and the HTML goes out as a normal page. Nothing is live yet.
-2. **Live.** The browser opens a WebSocket and sends the root's props. Tether creates the
-   components **again**, `mount()` runs again, and the fresh HTML replaces the first. From now
-   on, each component's `run()` runs, and events reach handlers.
-3. **Unmount.** A component leaves when its parent stops placing it, or when the tab closes (or
-   reloads, or loses its connection). Its coroutines, `run()` included, are cancelled.
+2. **Live.** The browser opens a WebSocket and says what it shows (its URL, or the root's
+   props). Tether creates the components **again**, `mount()` runs again, and the fresh HTML
+   replaces the first. From now on, each component's `run()` runs, and events reach handlers.
+3. **Unmount.** A component leaves when its parent stops placing it, when navigation replaces
+   the root, or when the tab closes (or reloads, or loses its connection). Its coroutines,
+   `run()` and those started with `go()`, are cancelled.
 
 Because the first render and the live tab are two instances, state in properties does not carry
 over from 1 to 2, and anything `mount()` does, it does twice. That is harmless for reading
@@ -132,8 +135,6 @@ It runs inside a render, so keep it short. It may not call `js()`: nothing is in
 ## run()
 
 Runs in a coroutine of its own while the component is live, and is cancelled when it leaves.
-Every coroutine it starts (`phasync::go()`) belongs to the component too, and is cancelled with
-it.
 
 ```php
 final class Clock extends Component
@@ -163,7 +164,50 @@ phasync-ext.
 
 Cancellation arrives as a `phasync\CancelledException` at the next wait. Let it pass: catching it
 and carrying on would keep a component running that is no longer on the page. Use `finally`
-for cleanup.
+for cleanup; code there may still write to the database, publish, and wait:
+
+```php
+public function run(): void
+{
+    Presence::join($this->room, $this->user);
+    try {
+        // ...
+    } finally {
+        Presence::leave($this->room, $this->user);   // the tab closed, or the component left
+    }
+}
+```
+
+`run()` may return: the component stays, it just has nothing more to do in the background.
+
+A failure in `run()` (an exception it doesn't catch) is the component's: see [Errors](errors.md).
+
+## go(): more coroutines
+
+`$this->go(fn () => ...)` starts another coroutine of the component's, from an event handler,
+`run()` or another of its coroutines. It is cancelled when the component leaves, and a failure
+in it is the component's, as for `run()`. Following several topics at once takes one each:
+
+```php
+public function run(): void
+{
+    $this->go(function () {
+        foreach (Swerve::subscribe("room:{$this->room}") as $json) {
+            $this->messages[] = json_decode($json, true);
+            $this->requestRender();
+        }
+    });
+    $this->go(function () {
+        foreach (Swerve::subscribe("typing:{$this->room}") as $name) {
+            $this->typing[$name] = microtime(true);
+            $this->requestRender();
+        }
+    });
+}
+```
+
+A coroutine started with `phasync::go()` is not the component's: it belongs to the tab's
+request, runs until it ends or the tab closes, and its failures are only logged. Use `go()`.
 
 ## requestRender()
 

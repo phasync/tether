@@ -1,7 +1,7 @@
 # Errors
 
-A component fails when its `render()`, `mount()`, an event handler or `run()` throws. What
-happens next depends on what is above it.
+A component fails when its `render()`, `mount()`, an event handler, `run()` or a coroutine it
+started with `go()` throws. What happens next depends on what is above it.
 
 ## Error boundaries
 
@@ -60,8 +60,9 @@ html[tether-offline] body::before { content: 'Reconnecting…'; position: fixed;
 The browser waits a little longer after each connection that fails before mounting (up to 5 s),
 so a page that fails on every mount doesn't hammer the server.
 
-On the first render (the HTTP request), a failure is an ordinary exception in the route:
-mini's error page, a 500.
+On the first render (the HTTP request), a failure is an ordinary exception in the route: your
+framework's error page, a 500. During navigation in an App, a route that throws makes the
+browser load the URL, and see that page.
 
 ## Expected failures
 
