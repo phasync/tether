@@ -5,10 +5,13 @@ namespace Tether;
 /**
  * One browser tab's components: the tree, rendering, events, and their coroutines.
  *
- * Rendering is batched: update() marks a component, and the marked components render once,
- * parents first, at the next turn of the event loop. A child whose parent renders is rendered
- * as part of it, if it was marked or is new; otherwise the parent's patch keeps its last HTML
- * and the browser leaves the child's DOM alone.
+ * Rendering is decoupled from state changes: stateHasChanged() puts a component in the tab's redraw set
+ * and raises the tab's flag. The tab's writer coroutine (run()) wakes, renders every component
+ * in the set once, parents first, and sends them as one frame; then it sends nothing more until
+ * 1/$maxFps has passed. Whatever changes meanwhile joins the next frame. A slow client makes the
+ * send wait, and the set keeps collecting: it gets fewer frames, never a backlog. A child whose
+ * parent renders is rendered as part of it, if it was marked or is new; otherwise the parent's
+ * frame keeps its last HTML and the browser leaves the child's DOM alone.
  *
  * Each component has a phasync context of its own (ComponentContext): unmounting cancels its
  * coroutines, its children's first.
@@ -22,10 +25,9 @@ final class Circuit
 
     private int $nextId = 0;
 
-    /** @var array<string, true> component ids marked by update() */
+    /** @var array<string, true> component ids marked by stateHasChanged() */
     private array $dirty = [];
 
-    private bool $scheduled = false;
 
     /** The component whose render() is running, for child(). */
     private ?Node $rendering = null;
@@ -36,10 +38,35 @@ final class Circuit
     private ?Node $root = null;
 
     /**
-     * @param \Closure(array): void|null $send sends a frame to the browser; null when not live
+     * @param \Closure(array): void|null $send   sends a frame to the browser; null when not live
+     * @param float                      $maxFps the most frames a second
      */
-    public function __construct(private readonly ?\Closure $send = null)
+    public function __construct(private readonly ?\Closure $send = null, private readonly float $maxFps = 30)
     {
+    }
+
+    /**
+     * The tab's writer: waits for a state change, renders what changed and sends it, at most
+     * $maxFps times a second. Runs until cancelled, which ends it quietly.
+     */
+    public function run(): void
+    {
+        $next = 0.0;
+        try {
+            while (true) {
+                while (!$this->dirty) {
+                    \phasync::awaitFlag($this);
+                }
+                $wait = $next - \microtime(true);
+                if ($wait > 0) {
+                    \phasync::sleep($wait);
+                }
+                $this->flush();
+                $next = \microtime(true) + 1 / $this->maxFps;
+            }
+        } catch (\phasync\CancelledException) {
+            // How the writer ends: the tab is gone
+        }
     }
 
     /**
@@ -81,21 +108,14 @@ final class Circuit
         \phasync::raiseFlag($node);
     }
 
-    /** @internal see Component::update() */
-    public function update(Component $component): void
+    /** @internal see Component::stateHasChanged() */
+    public function stateHasChanged(Component $component): void
     {
         if (null === $this->send || !isset($this->nodes[$component->id])) {
             return;
         }
         $this->dirty[$component->id] = true;
-        if (!$this->scheduled) {
-            $this->scheduled = true;
-            // After what runs now: updates in the same turn render once
-            \phasync::go(function () {
-                \phasync::sleep(0);
-                $this->flush();
-            });
-        }
+        \phasync::raiseFlag($this);
     }
 
     /** @internal see Component::child() */
@@ -118,7 +138,7 @@ final class Circuit
                     try {
                         return $value(...$args);
                     } finally {
-                        $this->update($parent);
+                        $this->stateHasChanged($parent);
                     }
                 };
             }
@@ -142,7 +162,6 @@ final class Circuit
      */
     private function flush(): void
     {
-        $this->scheduled = false;
         $marked          = \array_keys($this->dirty);
         \usort($marked, fn ($a, $b) => $this->nodes[$a]->depth <=> $this->nodes[$b]->depth);
         $patches = [];
@@ -195,7 +214,7 @@ final class Circuit
                 [$method, $args] = $node->events->dequeue();
                 \phasync::go(function () use ($component, $method, $args) {
                     $component->$method(...$args);
-                    $this->update($component);
+                    $this->stateHasChanged($component);
                 });
             }
             \phasync::awaitFlag($node);

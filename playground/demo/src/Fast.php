@@ -23,7 +23,7 @@ final class Fast extends Component
             $elapsed        = (hrtime(true) - $start) / 1e9;
             $this->achieved = $elapsed > 0 ? $this->frame / $elapsed : 0;
             $this->position = (sin($elapsed * 2) + 1) / 2;
-            $this->update();
+            $this->stateHasChanged();
             \phasync::sleep(1 / $this->rate);
         }
     }

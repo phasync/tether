@@ -84,6 +84,7 @@ final class Tether implements MiddlewareInterface
         try {
             $html = $circuit->mount($mount['c'], $mount['p']);
             $ws->send(\json_encode(['t' => 'mount', 'html' => $html], \JSON_THROW_ON_ERROR));
+            $writer = \phasync::go($circuit->run(...));
             while (null !== ($message = $ws->receive())) {
                 $event = \json_decode($message, true);
                 if (!\is_array($event) || !\is_string($event['c'] ?? null) || !\is_string($event['m'] ?? null) || !\is_array($event['a'] ?? [])) {
@@ -96,7 +97,11 @@ final class Tether implements MiddlewareInterface
                 }
             }
         } finally {
-            // The tab is gone, or the worker drains: every component's coroutines are cancelled
+            // The tab is gone, or the worker drains: the writer and every component's coroutines
+            // are cancelled
+            if (isset($writer) && !$writer->isTerminated()) {
+                \phasync::cancel($writer);
+            }
             $circuit->close();
         }
     }

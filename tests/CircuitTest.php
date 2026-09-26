@@ -39,10 +39,12 @@ function ticking_after(Closure $act): array
         $circuit       = new Circuit(static function (array $frame) {});
         // root shows a child, which shows a grandchild
         $circuit->mount(Ticker::class, ['label' => 'root', 'showChild' => true]);
+        $writer = phasync::go($circuit->run(...));
         phasync::sleep(0.05);
         $act($circuit);
         $before = Ticker::$ticks;
         phasync::sleep(0.05);
+        phasync::cancel($writer);
         $circuit->close();
         $ticking = [];
         foreach ($before as $label => $n) {
@@ -69,14 +71,16 @@ test('closing the circuit (the tab is gone) cancels every coroutine', function (
     expect(ticking_after(static fn (Circuit $circuit) => $circuit->close()))->toBe(['root' => false, 'root/child' => false, 'root/child/child' => false]);
 });
 
-test('updates in the same turn render once; the patch lists the components rendered', function () {
+test('updates in a row render once, in one frame; the frame lists the components rendered', function () {
     $frames = phasync::run(function () {
         $frames  = [];
         $circuit = new Circuit(static function (array $frame) use (&$frames) { $frames[] = $frame; });
         $circuit->mount(Ticker::class, ['label' => 'r', 'showChild' => true]);
+        $writer = phasync::go($circuit->run(...));
         $circuit->event('c1', 'hide', []);
         $circuit->event('c1', 'hide', []);
         phasync::sleep(0.05);
+        phasync::cancel($writer);
         $circuit->close();
 
         return $frames;
@@ -85,4 +89,27 @@ test('updates in the same turn render once; the patch lists the components rende
     $c1      = array_values(array_filter($patches, static fn ($p) => 'c1' === $p['id']));
     expect(count($c1))->toBeLessThanOrEqual(2);
     expect($c1[0]['html'])->toBe('<div tether-id="c1"></div>');
+});
+
+test('frames are sent at most maxFps times a second, each with the latest state', function () {
+    $frames = phasync::run(function () {
+        $frames  = [];
+        $circuit = new Circuit(static function (array $frame) use (&$frames) { $frames[] = microtime(true); }, maxFps: 20);
+        $circuit->mount(Ticker::class, ['label' => 'fast']); // run() updates nothing, so drive it by events
+        $writer = phasync::go($circuit->run(...));
+        $end    = microtime(true) + 0.5;
+        while (microtime(true) < $end) {
+            $circuit->event('c1', 'hide', []); // 1000 state changes a second
+            phasync::sleep(0.001);
+        }
+        phasync::cancel($writer);
+        $circuit->close();
+
+        return $frames;
+    });
+    // 0.5 s at 20 frames a second: about 10, and never two closer than 1/20 s
+    expect(count($frames))->toBeGreaterThanOrEqual(8)->toBeLessThanOrEqual(12);
+    for ($i = 1; $i < count($frames); ++$i) {
+        expect($frames[$i] - $frames[$i - 1])->toBeGreaterThan(0.045);
+    }
 });

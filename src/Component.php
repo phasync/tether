@@ -12,8 +12,8 @@ namespace Tether;
  * - run(): optional; runs in a coroutine of its own while the component is on the page, and is
  *   cancelled when it leaves (its parent stops rendering it, or the browser tab closes). Every
  *   coroutine it starts is cancelled with it. Wait with sleep() or phasync::sleep().
- * - update(): render again soon. Several updates in a row render once. After an event handler,
- *   the component renders by itself.
+ * - stateHasChanged(): render again soon: in the tab's next frame. Called many times in a row,
+ *   it still renders once. After an event handler, the component renders by itself.
  * - Event handlers: public methods of the component's own class, called from the browser
  *   (`tether-click="increment"`). Never render(), run(), or those of this class.
  */
@@ -31,9 +31,9 @@ abstract class Component
     }
 
     /** Render this component again soon. */
-    final protected function update(): void
+    final protected function stateHasChanged(): void
     {
-        $this->circuit?->update($this);
+        $this->circuit?->stateHasChanged($this);
     }
 
     /**
