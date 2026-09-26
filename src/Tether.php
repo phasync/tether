@@ -2,6 +2,7 @@
 
 namespace Tether;
 
+use mini\Dispatcher\RequestDispatcher;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -21,6 +22,11 @@ use Tether\Transport\WebSocket;
  * The root's props travel through the browser to the live connection, which may reach another
  * worker: they are signed, with TETHER_SECRET, or else a key kept in the system's temporary
  * directory.
+ *
+ * The live connection is the tab's request, for as long as the tab is open: with mini,
+ * `mini\request()`, `$_COOKIE`, `$_SESSION` and the Scoped services are the tab's in every
+ * component, and a browser page from another site can not open one (its Origin must be this
+ * host, or one of $origins).
  */
 final class Tether implements MiddlewareInterface
 {
@@ -30,12 +36,24 @@ final class Tether implements MiddlewareInterface
     ];
 
     /**
+     * @param list<string> $origins other origins whose pages may open live connections, such as
+     *                              "https://app.example.com"
+     */
+    public function __construct(private readonly array $origins = [])
+    {
+    }
+
+    /**
      * @param class-string<Component> $class
      * @param array<string, mixed>    $props  JSON-encodable
+     * @param string                  $title  text
+     * @param string                  $head   HTML for the head: the application's styles, and
+     *                                        its scripts (defer, to run after Tether's: hooks)
      */
-    public static function page(string $class, array $props = [], string $title = ''): ResponseInterface
+    public static function page(string $class, array $props = [], string $title = '', string $head = ''): ResponseInterface
     {
         $html  = (new Circuit())->mount($class, $props);
+        $title = \htmlspecialchars($title);
         $mount = \json_encode(['c' => $class, 'p' => $props, 's' => self::sign($class, $props)], \JSON_THROW_ON_ERROR | \JSON_HEX_TAG | \JSON_HEX_AMP);
 
         return new Response(<<<HTML
@@ -47,6 +65,7 @@ final class Tether implements MiddlewareInterface
             <title>{$title}</title>
             <script src="/_tether/idiomorph.js" defer></script>
             <script src="/_tether/tether.js" defer></script>
+            {$head}
             </head>
             <body>
             {$html}
@@ -63,37 +82,64 @@ final class Tether implements MiddlewareInterface
             return new Response(\fopen(\dirname(__DIR__) . '/resources/' . self::ASSETS[$path], 'r'), ['Content-Type' => 'text/javascript; charset=utf-8', 'Cache-Control' => 'no-cache']);
         }
         if ('/_tether/live' === $path) {
-            return WebSocket::upgrade($request, self::live(...));
+            $origin = $request->getHeaderLine('Origin');
+            if ('' !== $origin && !\in_array($origin, $this->origins, true) && \strtolower((string) \preg_replace('#^[a-z][a-z0-9+.-]*://#i', '', $origin)) !== \strtolower($request->getHeaderLine('Host'))) {
+                return new Response('A page from another site can not open a live connection', ['Content-Type' => 'text/plain'], 403);
+            }
+
+            return WebSocket::upgrade($request, static fn (WebSocket $ws) => self::live($ws, $request));
         }
 
         return $handler->handle($request);
     }
 
     /**
-     * A tab's live connection: the first message mounts the page's root, the rest are events.
+     * A tab's live connection: the first message mounts the page's root, the rest are events
+     * and the results of js() calls.
      */
-    private static function live(WebSocket $ws): void
+    private static function live(WebSocket $ws, ServerRequestInterface $request): void
     {
+        // The browser speaks first once it has the 101 response, so after mini's handle()
+        // returned: from here on, the tab is the request's work
         $mount = \json_decode((string) $ws->receive(), true);
         if (!\is_array($mount) || !\is_string($mount['c'] ?? null) || !\is_array($mount['p'] ?? null) || !\hash_equals(self::sign($mount['c'], $mount['p']), (string) ($mount['s'] ?? ''))) {
             $ws->close(1008);
 
             return;
         }
-        $circuit = new Circuit(static fn (array $frame) => $ws->send(\json_encode($frame, \JSON_THROW_ON_ERROR)));
+        RequestDispatcher::within($request, static fn () => self::tab($ws, $mount));
+    }
+
+    /**
+     * A live tab: mount its root, then events and the results of js() calls, until it closes.
+     *
+     * @param array{c: class-string<Component>, p: array} $mount
+     */
+    private static function tab(WebSocket $ws, array $mount): void
+    {
+        $circuit = new Circuit(
+            send: static fn (array $frame) => $ws->send(\json_encode($frame, \JSON_THROW_ON_ERROR)),
+            crash: static function (\Throwable $e) use ($ws) {
+                Swerve::log()->error('Tether: the tab failed, and starts over: {exception}', ['exception' => $e]);
+                $ws->close(1011);
+            },
+        );
         try {
-            $html = $circuit->mount($mount['c'], $mount['p']);
+            if (null === ($html = $circuit->mount($mount['c'], $mount['p']))) {
+                return;
+            }
             $ws->send(\json_encode(['t' => 'mount', 'html' => $html], \JSON_THROW_ON_ERROR));
             $writer = \phasync::go($circuit->run(...));
             while (null !== ($message = $ws->receive())) {
-                $event = \json_decode($message, true);
-                if (!\is_array($event) || !\is_string($event['c'] ?? null) || !\is_string($event['m'] ?? null) || !\is_array($event['a'] ?? [])) {
-                    continue;
-                }
-                try {
-                    $circuit->event($event['c'], $event['m'], \array_values($event['a'] ?? []));
-                } catch (\InvalidArgumentException $e) {
-                    Swerve::log()->warning('Tether: {message}', ['message' => $e->getMessage()]);
+                $message = \json_decode($message, true);
+                if (\is_array($message) && 'return' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
+                    $circuit->returned($message['i'], $message['v'] ?? null, isset($message['e']) ? (string) $message['e'] : null);
+                } elseif (\is_array($message) && \is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_int($message['r'] ?? 0)) {
+                    try {
+                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null);
+                    } catch (\InvalidArgumentException $e) {
+                        Swerve::log()->warning('Tether: {message}', ['message' => $e->getMessage()]);
+                    }
                 }
             }
         } finally {

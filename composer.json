@@ -11,6 +11,7 @@
     ],
     "require": {
         "php": ">=8.3",
+        "phasync/phasync": "^2.0.0-alpha6",
         "phasync/swerve": "@dev",
         "fubber/mini": "@dev"
     },
@@ -31,12 +32,16 @@
         {
             "type": "path",
             "url": "../swerve",
-            "options": { "symlink": true }
+            "options": {
+                "symlink": true
+            }
         },
         {
             "type": "path",
             "url": "../mini-framework",
-            "options": { "symlink": true }
+            "options": {
+                "symlink": true
+            }
         }
     ],
     "minimum-stability": "alpha",

@@ -26,7 +26,7 @@ final class Node
     /** The HTML of the last render. */
     public string $html = '';
 
-    /** @var \SplQueue<array{0: string, 1: array}> events for the component's inbox: method and arguments */
+    /** @var \SplQueue<array{0: string, 1: array, 2: ?int}> events for the component's inbox: method, arguments, reply id */
     public \SplQueue $events;
 
     public function __construct(
