@@ -12,6 +12,7 @@ $app = new class implements RequestHandlerInterface {
     {
         return match ($request->getUri()->getPath()) {
             '/'     => Tether::page(Demo\Page::class, ['title' => 'Tether demo'], 'Tether demo'),
+            '/fast' => Tether::page(Demo\FastPage::class, ['rate' => max(1, min(1000, (int) ($request->getQueryParams()['rate'] ?? 50)))], 'Tether: fast'),
             default => new Response('Not found', [], 404),
         };
     }
