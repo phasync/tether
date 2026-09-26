@@ -1,0 +1,90 @@
+# Errors
+
+A component fails when its `render()`, `mount()`, an event handler or `run()` throws. What
+happens next depends on what is above it.
+
+## Error boundaries
+
+A component implementing `Tether\ErrorBoundary` catches what fails below it: its children, their
+children, and so on.
+
+```php
+use Tether\Component;
+use Tether\ErrorBoundary;
+
+final class Panel extends Component implements ErrorBoundary
+{
+    public ?string $error = null;
+
+    public function catch(\Throwable $e): void
+    {
+        $this->error = 'Something went wrong';
+    }
+
+    public function retry(): void
+    {
+        $this->error = null;
+    }
+
+    public function render(): string
+    {
+        return null !== $this->error
+            ? "<section><p>{$this->error} <button tether-click=\"retry\">Try again</button></p></section>"
+            : "<section>{$this->child(Feed::class)}</section>";
+    }
+}
+```
+
+- `catch()` gets the exception; then the boundary renders again. Showing an error instead of
+  the children unmounts them (their coroutines are cancelled); placing them again later creates
+  them anew, from `mount()`.
+- A boundary does not catch its own failures, and a boundary whose render fails again right
+  away hands the failure to the next boundary up.
+- The exception is logged either way (swerve's log, level error).
+- `catch()` is not an event handler: the browser can't call it.
+
+Put boundaries around the parts that can fail on their own: a feed that talks to another
+service, a widget, an LLM panel. The rest of the page keeps working.
+
+## Without a boundary: the tab starts over
+
+A failure with no boundary above crashes the tab: every component is unmounted, the connection
+closes, and the browser reconnects and mounts the page from scratch, as after a restart. The
+user sees the page come back in its initial state (with whatever storage and the session hold).
+While disconnected, `<html>` has the attribute `tether-offline`, for a "Reconnecting…" style:
+
+```css
+html[tether-offline] body::before { content: 'Reconnecting…'; position: fixed; inset: 0 0 auto 0; background: #fd6; text-align: center }
+```
+
+The browser waits a little longer after each connection that fails before mounting (up to 5 s),
+so a page that fails on every mount doesn't hammer the server.
+
+On the first render (the HTTP request), a failure is an ordinary exception in the route:
+mini's error page, a 500.
+
+## Expected failures
+
+Exceptions are for bugs and outages. A validation error, a missing record, a full room are
+state: set a property and render it.
+
+```php
+public function send(array $form): void
+{
+    if (mb_strlen($form['text'] ?? '') > 2000) {
+        $this->error = 'Messages are at most 2,000 characters';
+
+        return;
+    }
+    // ...
+}
+```
+
+A `js()` call that fails throws `Tether\JsException` into the handler: catch it where the
+browser may lack something (a camera, a permission).
+
+## Logging
+
+Tether logs through `Swerve::log()` (PSR-3), which swerve writes to its log: failures caught by
+boundaries and crashes at level error, refused events (unknown handlers, wrong argument types)
+at level warning.
