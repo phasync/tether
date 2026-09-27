@@ -1,5 +1,6 @@
 // The demo application in a real browser. Usage: node tests/browser/demo.mjs http://127.0.0.1:PORT/
 import net from 'node:net';
+import tls from 'node:tls';
 import { launch } from './cdp.mjs';
 
 const url = process.argv[2];
@@ -20,8 +21,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The status line of a WebSocket handshake to the live endpoint, with $origin
 const handshake = (origin) => new Promise((resolve, reject) => {
-  const { hostname, port, host } = new URL(url);
-  const socket = net.connect(+port, hostname, () => socket.write(`GET /_tether/live HTTP/1.1\r\nHost: ${host}\r\nOrigin: ${origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`));
+  const { protocol, hostname, port, host } = new URL(url);
+  const secure = protocol === 'https:';
+  const socket = (secure ? tls : net).connect({ host: hostname, port: +port || (secure ? 443 : 80), servername: hostname }, () => socket.write(`GET /_tether/live HTTP/1.1\r\nHost: ${host}\r\nOrigin: ${origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`));
   socket.once('data', (d) => { resolve(d.toString().split('\r\n')[0]); socket.destroy(); });
   socket.on('error', reject);
 });

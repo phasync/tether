@@ -20,7 +20,8 @@ use Swerve\Http\Message\Response;
  *     });
  *
  * $handler runs in a coroutine of its own; the connection closes when it returns. receive()
- * answers pings and closes by itself; send() may be called from any coroutine.
+ * answers pings and closes by itself; send() may be called from any coroutine. The connection
+ * is pinged every PING_INTERVAL seconds, so a quiet one stays open.
  */
 final class WebSocket
 {
@@ -29,6 +30,14 @@ final class WebSocket
 
     /** How long send() waits for a client that stopped reading before giving it up. */
     public const SEND_TIMEOUT = 30.0;
+
+    /**
+     * How often a ping goes to the client, which answers with a pong: a quiet connection still
+     * carries something both ways, every PING_INTERVAL seconds. Proxies close connections that
+     * are quiet for a minute or less, and swerve's read of the response stream would otherwise
+     * give up after SEND_TIMEOUT without a message to send.
+     */
+    public const PING_INTERVAL = 15.0;
 
     private string $buffer = '';
     private bool $closed   = false;
@@ -51,6 +60,16 @@ final class WebSocket
         }
         $ws = new self($request->getBody(), new UnbufferedStream(65536, self::SEND_TIMEOUT));
         \phasync::go(static function () use ($ws, $handler) {
+            $keepalive = \phasync::go(static function () use ($ws) {
+                try {
+                    while (!$ws->closed) {
+                        \phasync::sleep(self::PING_INTERVAL);
+                        $ws->frame(9, '');
+                    }
+                } catch (\phasync\CancelledException) {
+                    // The connection ended
+                }
+            });
             try {
                 $handler($ws);
                 $ws->close(1000);
@@ -58,6 +77,9 @@ final class WebSocket
                 $ws->close(1011);
                 throw $e; // logged by swerve
             } finally {
+                if (!$keepalive->isTerminated()) {
+                    \phasync::cancel($keepalive);
+                }
                 $ws->out->end();
             }
         });

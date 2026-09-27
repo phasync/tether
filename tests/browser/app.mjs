@@ -83,6 +83,14 @@ try {
     await samePage();
   });
 
+  await check('a quiet tab stays connected (the server pings; nothing was sent for 35 s)', async () => {
+    await page.eval(`window.drops = 0; new MutationObserver(() => { if (document.documentElement.hasAttribute('tether-offline')) window.drops++; }).observe(document.documentElement, {attributes: true})`);
+    await new Promise((r) => setTimeout(r, 35000));
+    const drops = await page.eval(`window.drops`);
+    if (drops !== 0) throw new Error(`${drops} disconnects`);
+    await samePage();
+  });
+
   await check('a URL that is not a page (404) is loaded by the browser', async () => {
     await click('#links a[href="/app/rooms/9"]');
     await page.until(`location.pathname === '/app/rooms/9' && document.body.textContent.includes('No such room')`, 5000);
