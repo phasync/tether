@@ -14,7 +14,7 @@ namespace Tether;
  *   placed with child().
  * - run(): optional; runs in a coroutine of its own while the component is on the page, and is
  *   cancelled when it leaves (its parent stops rendering it, or the browser tab closes). Wait
- *   with sleep() or phasync::sleep().
+ *   with phasync::sleep() (and phasync::readable() / writable() for streams).
  * - go(): start another coroutine of the component's: cancelled when it leaves, and a failure
  *   of it is the component's.
  * - requestRender(): render again soon: in the tab's next frame. Called many times in a row,

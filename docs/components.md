@@ -146,7 +146,7 @@ final class Clock extends Component
         while (true) {
             $this->time = date('H:i:s');
             $this->requestRender();
-            sleep(1); // with phasync-ext; or phasync::sleep(1)
+            phasync::sleep(1);
         }
     }
 
@@ -157,10 +157,15 @@ final class Clock extends Component
 }
 ```
 
-Wait with `phasync::sleep()`, or plain `sleep()` when phasync-ext is loaded (it makes blocking
-calls cooperative). Blocking I/O without phasync-ext (a slow HTTP call through `curl`, a long
-database query) holds up every tab in the worker; use phasync's streams, or run with
-phasync-ext.
+Wait with phasync's functions: `phasync::sleep()`, `phasync::readable($stream)` and
+`phasync::writable($stream)` before reading or writing a network stream yourself,
+`CurlMulti::await()` for curl. They let the worker's other tabs run meanwhile, with or without
+phasync-ext, and an application that uses them works the same both ways.
+
+phasync-ext makes the rest cooperative too: plain `sleep()`, blocking stream reads, MySQL queries
+through mysqlnd. Without it, those hold up every tab in the worker while they wait: fine for
+a quick query, not for a slow one. Write the application to work without the extension, and
+let the extension make it faster.
 
 Cancellation arrives as a `phasync\CancelledException` at the next wait. Let it pass: catching it
 and carrying on would keep a component running that is no longer on the page. Use `finally`
