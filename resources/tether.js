@@ -3,8 +3,10 @@
 // - Events: an element with tether-click / tether-input / tether-change / tether-submit /
 //   tether-keydown names a handler method of the component it is in (the nearest tether-id).
 //   The handler gets: nothing for click and keydown; the element's value for input and change;
-//   the form's fields as an object for submit. `tether-keydown="send" tether-key="Enter"`
-//   calls send() only for that key.
+//   the form's fields as an object for submit, after the JSON array in tether-args if any
+//   (`tether-click="react" tether-args='[12, "👍"]'`). `tether-keydown="send"
+//   tether-key="Enter"` calls send() only for that combination: "Shift+Enter", "Mod+Enter" (Cmd
+//   on macOS, Ctrl elsewhere); several separated by spaces.
 // - Frames: patches, then calls, then replies. Each patch is a component's new HTML, morphed
 //   into its element. The inside of a child component is left alone unless the child was
 //   rendered too (it is in the patch's fresh list): a parent's update never disturbs a child's
@@ -204,6 +206,27 @@
     }
   }
 
+  // Whether a keydown is the combination "Enter", "Shift+Enter", "Ctrl+k", "Mod+Enter" (Cmd on
+  // macOS, Ctrl elsewhere): exactly those modifiers, so a plain "Enter" is Enter without any
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  function pressed(combo, event) {
+    const parts = combo.split('+');
+    const key = parts.pop();
+    const want = { shift: false, ctrl: false, alt: false, meta: false };
+    for (const part of parts) {
+      const modifier = part.toLowerCase();
+      if (modifier === 'mod') {
+        want[mac ? 'meta' : 'ctrl'] = true;
+      } else if (modifier === 'cmd') {
+        want.meta = true;
+      } else if (modifier in want) {
+        want[modifier] = true;
+      }
+    }
+    return (key.length === 1 ? event.key.toLowerCase() === key.toLowerCase() : event.key === key)
+      && event.shiftKey === want.shift && event.ctrlKey === want.ctrl && event.altKey === want.alt && event.metaKey === want.meta;
+  }
+
   const listen = (type, attribute, argsOf) => {
     document.addEventListener(type, (event) => {
       const element = event.target.closest?.(`[${attribute}]`);
@@ -211,18 +234,27 @@
         return;
       }
       if (type === 'keydown') {
-        const key = element.getAttribute('tether-key');
-        if (key && key !== event.key) {
+        const keys = element.getAttribute('tether-key');
+        if (keys && !keys.split(/[\s,]+/).some((combo) => pressed(combo, event))) {
           return;
         }
-        if (key) {
-          event.preventDefault(); // Enter in a textarea sends, and adds no line
+        if (keys) {
+          event.preventDefault(); // the combination sends: Enter in a textarea adds no line
         }
       }
       if (type === 'submit' || type === 'click' && element.tagName === 'A') {
         event.preventDefault();
       }
-      send(element, element.getAttribute(attribute), argsOf(element, event));
+      let fixed = [];
+      if (element.hasAttribute('tether-args')) {
+        try {
+          fixed = JSON.parse(element.getAttribute('tether-args'));
+        } catch (error) {
+          console.error('Tether: tether-args must be a JSON array', element, error);
+          return;
+        }
+      }
+      send(element, element.getAttribute(attribute), [...fixed, ...argsOf(element, event)]);
     });
   };
   // An App's links: below the App, same window, no modifier keys; not while offline

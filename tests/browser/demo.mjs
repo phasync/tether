@@ -37,6 +37,20 @@ try {
     await page.until(`document.body.textContent.includes('Clicked 3 times')`);
   });
 
+  await check('tether-args: the element passes arguments to the handler', async () => {
+    await click('[tether-click=add]');
+    await page.until(`document.body.textContent.includes('Clicked 8 times')`);
+  });
+
+  await check('tether-key="Enter" is Enter alone: Shift+Enter does not send', async () => {
+    await type('[tether-input=type]', 'Not this');
+    await pause(100);
+    await page.eval(`document.querySelector('[tether-input=type]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', shiftKey: true, bubbles: true}))`);
+    await pause(200);
+    const items = await page.eval(`document.querySelectorAll('li').length`);
+    if (items !== 1) throw new Error(`${items} items`);
+  });
+
   await check('typing and Enter add an item', async () => {
     await type('[tether-input=type]', 'Second');
     await pause(100);

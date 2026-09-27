@@ -11,7 +11,31 @@ An attribute on an element names a handler: a public method of the component the
 | `tether-input="type"` | every change of an input's value | the value (`string`) |
 | `tether-change="pick"` | change (select, checkbox, committed input) | the value; for a checkbox, `true`/`false` |
 | `tether-submit="send"` | form submit (prevented) | the form's fields, `array<string, string>` |
-| `tether-keydown="add"` | a key | nothing; with `tether-key="Enter"`, only that key |
+| `tether-keydown="add"` | a key | nothing; with `tether-key`, only that key combination (below) |
+
+**Arguments from the element.** `tether-args` holds a JSON array, passed before the event's
+own value: one handler serves a whole list.
+
+```php
+foreach ($this->messages as $m) {
+    $html .= "<button tether-click=\"react\" tether-args='[{$m->id}, \"👍\"]'>👍</button>";
+}
+
+public function react(int $messageId, string $emoji): void { /* ... */ }
+```
+
+Build the JSON with `json_encode()` and escape it for the attribute
+(`htmlspecialchars(json_encode($args))`) when it holds anything a user wrote.
+
+**Key combinations.** `tether-key` names the combination: `Enter` is Enter with no modifier
+key, `Shift+Enter`, `Ctrl+k`, `Alt+ArrowUp`, `Mod+Enter` (Cmd on macOS, Ctrl elsewhere).
+Several are separated by spaces. A matching keydown calls the handler and does nothing else
+(Enter in a textarea adds no line); anything else goes through as usual, so a chat input can
+send on Enter and take Shift+Enter as a new line:
+
+```html
+<textarea tether-input="type" tether-keydown="send" tether-key="Enter"></textarea>
+```
 
 ```php
 public function send(array $form): void
