@@ -85,9 +85,12 @@ open:
   writers wait for each other instead of failing; for many writers, switch the file to WAL once
   (`PRAGMA journal_mode = WAL`; it stays set).
 - **One connection per open tab**: free for SQLite; for MySQL or PostgreSQL, 1,000 open tabs are
-  1,000 connections, so size the server for it.
-- **Queries block the worker** while they run, with or without phasync-ext: keep them short
-  (indexes), as every tab in the worker waits.
+  1,000 connections, and the server's limit counts (MySQL's default `max_connections` is 151).
+- **Whether a query blocks the worker** depends on the driver. MySQL and MariaDB through mysqlnd
+  (`pdo_mysql`, `mysqli`) with phasync-ext loaded: a query waits like any I/O, and the worker's
+  other tabs carry on (measured: two 1 s queries in two coroutines take 1 s, not 2). Without
+  phasync-ext, and always for SQLite (a file, no socket) and PostgreSQL (libpq), a query blocks
+  the whole worker while it runs: keep those short (indexes).
 - The components of a tab share the connection and take turns: don't wait for anything
   (`sleep()`, `js()`, a subscription) inside a transaction.
 
