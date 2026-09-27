@@ -79,8 +79,16 @@ gives it back when the statement is done:
   `foreach (db()->query('SELECT id, text FROM messages WHERE room = ?', [$room]) as $row) { $row->text; }`.
   `db()->insert('messages', [...])` returns the new id (a string); `db()->exec()` runs
   statements.
-- Create the schema before the workers start: a migration, or in `swerve.php` before it returns
-  the application (mini's services work there). Once per start, not in every component.
+- Create the schema before the application serves: a migration, or in `swerve.php` before it
+  returns the application, after `mini\bootstrap()` (see [Running Tether](running.md#with-mini)).
+  Not in components.
+- **Every worker runs `swerve.php` at the same time.** `CREATE TABLE IF NOT EXISTS` is safe;
+  seeding rows is not: "if the table is empty, insert the defaults" runs in every worker at
+  once, and each sees an empty table. Give seed rows a unique key and insert them with
+  `INSERT IGNORE` (MySQL) or `INSERT ... ON CONFLICT DO NOTHING` (SQLite, PostgreSQL), or seed
+  under a database lock so one worker seeds while the others wait: MySQL
+  `SELECT GET_LOCK('app.seed', 10)` ... `SELECT RELEASE_LOCK('app.seed')`, PostgreSQL
+  `pg_advisory_lock()`, SQLite `BEGIN EXCLUSIVE`.
 - **SQLite with many workers**: they all write the same file. mini sets a busy timeout, so
   writers wait for each other instead of failing; for many writers, switch the file to WAL once
   (`PRAGMA journal_mode = WAL`; it stays set).
@@ -175,7 +183,7 @@ final class Messages
     public static function recent(int $room): array
     {
         $messages = [];
-        foreach (mini\db()->query('SELECT id, user, text FROM messages WHERE room = ? ORDER BY id DESC LIMIT 50', [$room]) as $row) {
+        foreach (\mini\db()->query('SELECT id, user, text FROM messages WHERE room = ? ORDER BY id DESC LIMIT 50', [$room]) as $row) {
             $messages[$row->id] = $row;
         }
 
@@ -184,7 +192,7 @@ final class Messages
 
     public static function add(int $room, string $user, string $text): object
     {
-        $id = (int) mini\db()->insert('messages', ['room' => $room, 'user' => $user, 'text' => $text]);
+        $id = (int) \mini\db()->insert('messages', ['room' => $room, 'user' => $user, 'text' => $text]);
 
         return (object) ['id' => $id, 'user' => $user, 'text' => $text];
     }

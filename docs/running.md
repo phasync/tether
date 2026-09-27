@@ -71,8 +71,22 @@ swerve.php                the application, for swerve
 use mini\Dispatcher\RequestDispatcher;
 use mini\Mini;
 
-return Mini::$mini->get(RequestDispatcher::class);
+$dispatcher = Mini::$mini->get(RequestDispatcher::class);
+// Middleware and services are registered here, before \mini\bootstrap()
+
+\mini\bootstrap();   // mini's services work from here on: create the schema, say
+Schema::ensure();   // (every worker runs this file at the same time: see State)
+
+return $dispatcher;
 ```
+
+mini's services (`mini\db()`, the session) only work after `mini\bootstrap()`, which ends
+registration: `addMiddleware()` and `addService()` go before it. Without it, mini gets ready by
+itself when the first request comes, too late for `swerve.php`.
+
+Write mini's functions with a leading backslash, `\mini\bootstrap()`, `\mini\db()`: in a file
+with `use mini\Mini;`, PHP resolves `mini\bootstrap()` through that alias (to
+`mini\Mini\bootstrap()`), and in a namespaced class to `YourNamespace\mini\db()`.
 
 `_routes/__DEFAULT__.php` returns the App. mini routes everything below a directory's
 `__DEFAULT__.php` to it (`_routes/chat/__DEFAULT__.php` for an App at `/chat/`):
@@ -93,6 +107,7 @@ For single live pages instead, add Tether's middleware in `swerve.php` and retur
 ```php
 $dispatcher = Mini::$mini->get(RequestDispatcher::class);
 $dispatcher->addMiddleware(new Tether\Tether(enter: RequestDispatcher::within(...)));
+\mini\bootstrap();   // after the middleware, if swerve.php uses mini's services below
 
 return $dispatcher;
 ```
