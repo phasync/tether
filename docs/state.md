@@ -15,8 +15,8 @@ With mini (`enter: RequestDispatcher::within(...)`):
 - `$_SESSION`: the visitor's session, as in any request. Reads see changes other requests made
   (a sign-out in another tab). A component may write it too, but it can't set cookies, so a
   session is started by an ordinary request: the sign-in form.
-- mini's Scoped services are one per tab, shared by its components: the session, the `PDO`
-  connection, `mini\db()`.
+- mini's Scoped services are one per tab, shared by its components: the session, and
+  `mini\db()` (whose statements borrow pooled connections: see below).
 
 So authentication is your framework's: sign in through an ordinary route that writes the
 session, and read it in components.
@@ -70,8 +70,8 @@ by anyone who has the page (see [Security](security.md)).
 
 ## The database
 
-With mini, `mini\db()` (or the `PDO` service) is one connection per tab, for as long as it is
-open:
+With mini, `mini\db()` borrows a connection for each statement from its worker's pool, and
+gives it back when the statement is done:
 
 - Without configuration, it is SQLite, in `_database.sqlite3` at the application's root;
   `DATABASE_URL` selects another (`mysql://user:pass@host/db`).
@@ -84,15 +84,23 @@ open:
 - **SQLite with many workers**: they all write the same file. mini sets a busy timeout, so
   writers wait for each other instead of failing; for many writers, switch the file to WAL once
   (`PRAGMA journal_mode = WAL`; it stays set).
-- **One connection per open tab**: free for SQLite; for MySQL or PostgreSQL, 1,000 open tabs are
-  1,000 connections, and the server's limit counts (MySQL's default `max_connections` is 151).
+- **Connections per worker**: `MINI_DATABASE_POOL_SIZE` (5 by default), however many tabs are
+  open. Workers × pool size must fit the database server's limit (MySQL's default
+  `max_connections` is 151). While every connection is busy, the next statement waits for one.
+- **Coroutines never share a connection**: components of one tab can run statements at the
+  same time. A `transaction()` keeps one connection for its coroutine until it ends: that
+  coroutine's statements inside it use it, and nobody else sees its uncommitted work. A
+  coroutine started inside the transaction is not part of it.
+- `lastInsertId()` is the calling coroutine's; `query()` results are fetched completely, so
+  running another statement per row is fine.
+- The raw `PDO` service is still one per tab, outside the pool: use `mini\db()`.
 - **Whether a query blocks the worker** depends on the driver. MySQL and MariaDB through mysqlnd
   (`pdo_mysql`, `mysqli`) with phasync-ext loaded: a query waits like any I/O, and the worker's
   other tabs carry on (measured: two 1 s queries in two coroutines take 1 s, not 2). Without
   phasync-ext, and always for SQLite (a file, no socket) and PostgreSQL (libpq), a query blocks
   the whole worker while it runs: keep those short (indexes).
-- The components of a tab share the connection and take turns: don't wait for anything
-  (`sleep()`, `js()`, a subscription) inside a transaction.
+- A transaction holds its connection while it waits: don't wait for anything slow (`js()`, a
+  subscription, a user) inside one.
 
 ## State that outlives the tab
 
