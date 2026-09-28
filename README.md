@@ -54,7 +54,7 @@ and PHP 8.3 or later runs it. You don't have to start there:
 
 1. **Under PHP-FPM**, phasync already overlaps a request's slow calls (APIs, queries, files).
 2. **With [phasync-ext](https://github.com/phasync/phasync-ext)**, the libraries you already use
-   (PDO, curl, Guzzle, file functions) wait cooperatively too, without changes.
+   (MySQL through PDO, curl, Guzzle, file functions) wait cooperatively too, without changes.
 3. **On swerve**, the same PSR-15 application stays loaded and serves thousands of connections
    per worker.
 4. **With Tether**, pages of that application become live, next to its ordinary routes. A
