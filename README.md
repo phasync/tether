@@ -46,6 +46,8 @@ updates in the browser. No JavaScript to write, no API to design.
 > about 150 KB of memory per open tab (Blazor Server: about 250 KB). On a 56-core server,
 > 10,000 tabs updating continuously each got 22 to 29 frames a second.
 
+MIT, with no dependencies beyond phasync and swerve: [the Ennerd philosophy](PHILOSOPHY.md).
+
 ## Where Tether fits
 
 Tether is the top of the [phasync](https://github.com/phasync/phasync) stack, and needs the
