@@ -5,8 +5,8 @@ namespace Tether;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Swerve\Http\Message\Response;
+use Swerve\Http\WebSocket;
 use Swerve\Swerve;
-use Tether\Transport\WebSocket;
 
 /**
  * What Tether (one live page) and App (live pages with navigation) share: the page around the

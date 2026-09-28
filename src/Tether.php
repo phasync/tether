@@ -6,7 +6,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Tether\Transport\WebSocket;
+use Swerve\Http\WebSocket;
 
 /**
  * One live page in an application: Tether::page() as a route's response, and this middleware
@@ -61,7 +61,7 @@ final class Tether implements MiddlewareInterface
             return $asset;
         }
         if ('/_tether/live' === $path) {
-            return Live::refuseOrigin($request, $this->origins) ?? WebSocket::upgrade($request, fn (WebSocket $ws) => $this->live($ws, $request));
+            return Live::refuseOrigin($request, $this->origins) ?? WebSocket::from($request, fn (WebSocket $ws) => $this->live($ws, $request));
         }
 
         return $handler->handle($request);

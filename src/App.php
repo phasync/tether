@@ -6,7 +6,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Swerve\Http\Message\Response;
-use Tether\Transport\WebSocket;
+use Swerve\Http\WebSocket;
 
 /**
  * Live pages with navigation between them: a PSR-15 request handler, mounted where the
@@ -70,7 +70,7 @@ abstract class App implements RequestHandlerInterface
         $base = \str_ends_with($full, $path) ? \rtrim(\substr($full, 0, \strlen($full) - \strlen($path)), '/') : '';
         if (\str_starts_with($path, '/.tether/')) {
             if ('/.tether/live' === $path) {
-                return Live::refuseOrigin($request, $this->origins) ?? WebSocket::upgrade($request, fn (WebSocket $ws) => $this->live($ws, $request, $base));
+                return Live::refuseOrigin($request, $this->origins) ?? WebSocket::from($request, fn (WebSocket $ws) => $this->live($ws, $request, $base));
             }
 
             return Live::asset(\substr($path, 9)) ?? new Response('Not found', ['Content-Type' => 'text/plain'], 404);
