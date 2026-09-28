@@ -43,7 +43,22 @@ updates in the browser. No JavaScript to write, no API to design.
   session and services work in components.
 
 > Alpha: the API may still change. Measured on one core: about 18,000 frames a second, and
-> about 150 KB of memory per open tab (Blazor Server: about 250 KB).
+> about 150 KB of memory per open tab (Blazor Server: about 250 KB). On a 56-core server,
+> 10,000 tabs updating continuously each got 22 to 29 frames a second.
+
+## Where Tether fits
+
+Tether is the top of the [phasync](https://github.com/phasync/phasync) stack, and needs the
+layers under it: [swerve](https://github.com/phasync/swerve) keeps the tabs' connections open,
+and PHP 8.3 or later runs it. You don't have to start there:
+
+1. **Under PHP-FPM**, phasync already overlaps a request's slow calls (APIs, queries, files).
+2. **With [phasync-ext](https://github.com/phasync/phasync-ext)**, the libraries you already use
+   (PDO, curl, Guzzle, file functions) wait cooperatively too, without changes.
+3. **On swerve**, the same PSR-15 application stays loaded and serves thousands of connections
+   per worker.
+4. **With Tether**, pages of that application become live, next to its ordinary routes. A
+   component's code waits the same way everything below it does: plain PHP, no promises.
 
 ## Documentation
 
