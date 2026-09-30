@@ -2,8 +2,8 @@
 
 namespace Demo;
 
+use phasync\Psr\Response;
 use Psr\Http\Message\ResponseInterface;
-use Swerve\Http\Message\Response;
 use Tether\App;
 use Tether\Page;
 use Tether\Route;
@@ -21,7 +21,7 @@ final class ChatApp extends App
     public function room(int $id): Page|ResponseInterface
     {
         if ($id > 3) {
-            return new Response('No such room', ['Content-Type' => 'text/plain'], 404);
+            return new Response(404, ['Content-Type' => 'text/plain'], 'No such room');
         }
 
         return new Page(Shell::class, ['room' => $id], "Room $id");
@@ -31,7 +31,7 @@ final class ChatApp extends App
     #[Route('/old-room')]
     public function oldRoom(): ResponseInterface
     {
-        return new Response('', ['Location' => '/app/rooms/2'], 302);
+        return new Response(302, ['Location' => '/app/rooms/2'], '');
     }
 
     #[Route('/about')]

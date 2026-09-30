@@ -25,7 +25,7 @@ final class Chat extends App
     public function channel(int $id): Page|ResponseInterface
     {
         if (!Channel::exists($id)) {
-            return new \Swerve\Http\Message\Response('No such channel', [], 404);
+            return new \phasync\Psr\Response(404, [], 'No such channel');
         }
 
         return new Page(Layout::class, ['channel' => $id], Channel::name($id));

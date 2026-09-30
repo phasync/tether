@@ -2,10 +2,10 @@
 
 namespace Tether;
 
+use phasync\Psr\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Swerve\Http\Message\Response;
 use Swerve\Http\WebSocket;
 
 /**
@@ -73,10 +73,10 @@ abstract class App implements RequestHandlerInterface
                 return Live::refuseOrigin($request, $this->origins) ?? WebSocket::from($request, fn (WebSocket $ws) => $this->live($ws, $request, $base));
             }
 
-            return Live::asset(\substr($path, 9)) ?? new Response('Not found', ['Content-Type' => 'text/plain'], 404);
+            return Live::asset(\substr($path, 9)) ?? new Response(404, ['Content-Type' => 'text/plain'], 'Not found');
         }
         if ('GET' !== $request->getMethod() && 'HEAD' !== $request->getMethod()) {
-            return new Response('Method not allowed', ['Content-Type' => 'text/plain', 'Allow' => 'GET, HEAD'], 405);
+            return new Response(405, ['Content-Type' => 'text/plain', 'Allow' => 'GET, HEAD'], 'Method not allowed');
         }
         $result = $this->route($path, $request);
         if (!$result instanceof Page) {
@@ -122,7 +122,7 @@ abstract class App implements RequestHandlerInterface
             return $method->invokeArgs($this, $args);
         }
 
-        return new Response('Not found', ['Content-Type' => 'text/plain'], 404);
+        return new Response(404, ['Content-Type' => 'text/plain'], 'Not found');
     }
 
     /**

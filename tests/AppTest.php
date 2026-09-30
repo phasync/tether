@@ -1,9 +1,9 @@
 <?php
 
+use phasync\Psr\Response;
+use phasync\Psr\ServerRequest;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Swerve\Http\Message\Response;
-use Swerve\Http\Message\ServerRequest;
 use Tether\App;
 use Tether\Component;
 use Tether\Page;
@@ -42,7 +42,7 @@ final class TestApp extends App
     #[Route('/elsewhere')]
     public function elsewhere(): ResponseInterface
     {
-        return new Response('', ['Location' => '/'], 302);
+        return new Response(302, ['Location' => '/'], '');
     }
 }
 

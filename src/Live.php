@@ -2,9 +2,9 @@
 
 namespace Tether;
 
+use phasync\Psr\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Swerve\Http\Message\Response;
 use Swerve\Http\WebSocket;
 use Swerve\Swerve;
 
@@ -28,7 +28,7 @@ final class Live
             return null;
         }
 
-        return new Response(\fopen(\dirname(__DIR__) . '/resources/' . self::ASSETS[$name], 'r'), ['Content-Type' => 'text/javascript; charset=utf-8', 'Cache-Control' => 'no-cache']);
+        return new Response(200, ['Content-Type' => 'text/javascript; charset=utf-8', 'Cache-Control' => 'no-cache'], \fopen(\dirname(__DIR__) . '/resources/' . self::ASSETS[$name], 'r'));
     }
 
     /**
@@ -43,7 +43,7 @@ final class Live
         $title = \htmlspecialchars($title);
         $mount = \json_encode($mount, \JSON_THROW_ON_ERROR | \JSON_HEX_TAG | \JSON_HEX_AMP);
 
-        return new Response(<<<HTML
+        return new Response(200, ['Content-Type' => 'text/html; charset=utf-8'], <<<HTML
             <!doctype html>
             <html>
             <head>
@@ -59,7 +59,7 @@ final class Live
             <script type="application/json" id="tether-mount">{$mount}</script>
             </body>
             </html>
-            HTML, ['Content-Type' => 'text/html; charset=utf-8']);
+            HTML);
     }
 
     /**
@@ -76,7 +76,7 @@ final class Live
             return null;
         }
 
-        return new Response('A page from another site can not open a live connection', ['Content-Type' => 'text/plain'], 403);
+        return new Response(403, ['Content-Type' => 'text/plain'], 'A page from another site can not open a live connection');
     }
 
     /**
