@@ -133,7 +133,7 @@ abstract class App implements RequestHandlerInterface
     {
         $mount = \json_decode((string) $ws->receive(), true);
         if (!\is_string($mount['u'] ?? null)) {
-            $ws->close(1008);
+            $ws->end(1008);
 
             return;
         }

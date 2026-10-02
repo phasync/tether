@@ -92,7 +92,7 @@ final class Live
             send: static fn (array $frame) => $ws->send(\json_encode($frame, \JSON_THROW_ON_ERROR)),
             crash: static function (\Throwable $e) use ($ws) {
                 Swerve::log()->error('Tether: the tab failed, and starts over: {exception}', ['exception' => $e]);
-                $ws->close(1011);
+                $ws->end(1011);
             },
             resolve: $resolve,
         );

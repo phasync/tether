@@ -77,7 +77,7 @@ final class Tether implements MiddlewareInterface
         // the request and returned it: from here on, the tab is the request's work
         $mount = \json_decode((string) $ws->receive(), true);
         if (!\is_array($mount) || !\is_string($mount['c'] ?? null) || !\is_array($mount['p'] ?? null) || !\hash_equals(self::sign($mount['c'], $mount['p']), (string) ($mount['s'] ?? ''))) {
-            $ws->close(1008);
+            $ws->end(1008);
 
             return;
         }
