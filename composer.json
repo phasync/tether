@@ -12,7 +12,7 @@
     "require": {
         "php": ">=8.3",
         "phasync/phasync": "^2.0.0-beta6",
-        "phasync/swerve": "^0.1.0-beta3"
+        "phasync/swerve": "^0.1.0-beta4"
     },
     "require-dev": {
         "pestphp/pest": "^3.0 || ^4.0",
