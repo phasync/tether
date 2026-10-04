@@ -4,15 +4,35 @@
     "require": {
         "php": ">=8.3",
         "phasync/tether": "@dev",
-        "phasync/swerve": "@dev",
+        "phasync/swerve": "^0.1.0-beta5",
         "fubber/mini": "@dev"
     },
-    "autoload": { "psr-4": { "Demo\\": "src/" } },
+    "autoload": {
+        "psr-4": {
+            "Demo\\": "src/"
+        }
+    },
     "repositories": [
-        { "type": "path", "url": "../..", "options": { "symlink": true } },
-        { "type": "path", "url": "../../../swerve", "options": { "symlink": true } },
-        { "type": "path", "url": "../../../mini-framework", "options": { "symlink": true } }
+        {
+            "type": "path",
+            "url": "../..",
+            "options": {
+                "symlink": true
+            }
+        },
+        {
+            "type": "path",
+            "url": "../../../mini-framework",
+            "options": {
+                "symlink": true
+            }
+        }
     ],
-    "minimum-stability": "alpha",
-    "prefer-stable": true
+    "minimum-stability": "beta",
+    "prefer-stable": true,
+    "extra": {
+        "phasync": {
+            "ext": true
+        }
+    }
 }

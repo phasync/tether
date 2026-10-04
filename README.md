@@ -55,7 +55,7 @@ layers under it: [swerve](https://github.com/phasync/swerve) keeps the tabs' con
 and PHP 8.3 or later runs it. You don't have to start there:
 
 1. **Under PHP-FPM**, phasync already overlaps a request's slow calls (APIs, queries, files).
-2. **With [phasync-ext](https://github.com/phasync/phasync-ext)**, the libraries you already use
+2. **With phasync-ext** (bundled in phasync; `--ext` or composer.json), the libraries you already use
    (MySQL through PDO, curl, Guzzle, file functions) wait cooperatively too, without changes.
 3. **On swerve**, the same PSR-15 application stays loaded and serves thousands of connections
    per worker.

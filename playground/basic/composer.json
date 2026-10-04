@@ -5,12 +5,22 @@
     "require": {
         "php": ">=8.3",
         "fubber/mini": "@dev",
-        "phasync/swerve": "@dev"
+        "phasync/swerve": "^0.1.0-beta5"
     },
     "repositories": [
-        { "type": "path", "url": "../../../swerve", "options": { "symlink": true } },
-        { "type": "path", "url": "../../../mini-framework", "options": { "symlink": true } }
+        {
+            "type": "path",
+            "url": "../../../mini-framework",
+            "options": {
+                "symlink": true
+            }
+        }
     ],
-    "minimum-stability": "alpha",
-    "prefer-stable": true
+    "minimum-stability": "beta",
+    "prefer-stable": true,
+    "extra": {
+        "phasync": {
+            "ext": true
+        }
+    }
 }

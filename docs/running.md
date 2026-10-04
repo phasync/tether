@@ -35,11 +35,11 @@ instead, and require `"phasync/swerve": "@dev"` too (a path repository only has 
 ]
 ```
 
-For production, also install [phasync-ext](https://github.com/phasync/phasync-ext): it makes
+For production, also use phasync-ext, which ships inside phasync: it makes
 blocking PHP calls (`sleep()`, reads and writes on PHP streams, and so MySQL queries through
 mysqlnd) give way to other coroutines instead of blocking the worker, and lifts the limit of
-about 900 connections per worker. Load it for swerve with
-`php -d extension=/path/to/phasync.so vendor/bin/swerve ...`, or in PHP's configuration. Tether works without it, identically, as long as components wait with phasync's
+about 900 connections per worker. Enable it with `"extra": {"phasync": {"ext": true}}` in your
+composer.json, or start swerve with `--ext` (swerve stops if it cannot load). Tether works without it, identically, as long as components wait with phasync's
 functions (see [Components](components.md#run)).
 
 ## Two ways to use it
