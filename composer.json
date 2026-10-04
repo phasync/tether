@@ -11,15 +11,12 @@
     ],
     "require": {
         "php": ">=8.3",
-        "phasync/phasync": "^2.0.0-beta6",
-        "phasync/swerve": "^0.1.0-beta4"
+        "phasync/phasync": "^2.0.0-beta7",
+        "phasync/swerve": "^0.1.0-beta5"
     },
     "require-dev": {
         "pestphp/pest": "^3.0 || ^4.0",
         "fubber/mini": "@dev"
-    },
-    "suggest": {
-        "phasync/phasync-ext": "A component's run() and event handlers wait cooperatively for I/O (a database query, an HTTP call) under it, so one tab's slow call no longer stalls every other open tab on the worker; works fully without it."
     },
     "autoload": {
         "psr-4": {
