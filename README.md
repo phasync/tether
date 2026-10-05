@@ -64,6 +64,9 @@ the closure runs for both, so a redirect or a 404 in it covers both.
 - **Any framework**, or none: `Tether::from()` needs only the PSR-7 request. With a framework
   whose request state follows the request (not process-wide globals), such as mini, the tab is
   a request for as long as it is open, so its session and services work in components.
+  Tested with mini and with Slim 4: [playground/slim](playground/slim) serves a counter, a todo
+  list, a chat room and the new events from Slim routes, and a Slim middleware's request attribute
+  is readable by a component on the live tab. Nothing is claimed for other frameworks.
 
 > Alpha: the API may still change. Measured on one core: about 18,000 frames a second, and
 > about 150 KB of memory per open tab (Blazor Server: about 250 KB). On a 56-core server,
@@ -112,4 +115,6 @@ changes to them take effect here at once.
 - `node tests/browser/demo.mjs http://127.0.0.1:8080/` and
   `node tests/browser/app.mjs http://127.0.0.1:8080` (and `interop.mjs`, `events.mjs`): the demo in headless Chrome, against a
   running demo (see [Running Tether](docs/running.md)).
+- `node tests/browser/slim.mjs http://127.0.0.1:8080/`: the same, for `playground/slim`
+  (`vendor/bin/swerve --http=8080 swerve.php` there).
 - `node tests/load/tabs.mjs http://127.0.0.1:8080/fast?rate=50 1000 10`: 1,000 simulated tabs.

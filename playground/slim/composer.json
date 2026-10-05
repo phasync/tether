@@ -1,0 +1,33 @@
+{
+    "name": "phasync/tether-playground-slim",
+    "description": "Tether in a Slim 4 application on swerve",
+    "type": "project",
+    "require": {
+        "php": ">=8.3",
+        "phasync/tether": "@dev",
+        "phasync/swerve": "^0.1.0-beta5",
+        "slim/slim": "^4.14",
+        "slim/psr7": "^1.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "SlimDemo\\": "src/"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../..",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "minimum-stability": "beta",
+    "prefer-stable": true,
+    "extra": {
+        "phasync": {
+            "ext": true
+        }
+    }
+}
