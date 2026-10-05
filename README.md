@@ -100,6 +100,7 @@ and PHP 8.3 or later runs it. You don't have to start there:
    publish/subscribe between tabs, presence, streaming from an LLM.
 7. [Errors](docs/errors.md): error boundaries, crashes, logging.
 8. [Security](docs/security.md): what the browser can do, escaping, origins, what the closure checks.
+9. [Testing components](docs/testing.md): `Tether\Testing\Tab`, a live tab without a browser.
 
 ## Development
 

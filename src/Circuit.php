@@ -336,6 +336,18 @@ final class Circuit
         }
     }
 
+    /**
+     * Wait until the tab has nothing left to do: no handler queued or running, nothing marked to
+     * render, nothing unsent. Components that wait (run(), a handler asleep) are not idle until
+     * they have finished or changed state and the frame is out. For tests: see Testing\Tab.
+     */
+    public function idle(): void
+    {
+        while (null !== $this->root && ($this->running > 0 || $this->flushing || $this->dirty || $this->remote->rel || $this->replies || $this->failures || $this->navigations || $this->refused)) {
+            \phasync::awaitFlag($this->flushed);
+        }
+    }
+
     /** @internal see Component::requestRender() */
     public function requestRender(Component $component): void
     {

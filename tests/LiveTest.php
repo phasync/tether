@@ -8,6 +8,7 @@ use Tether\Component;
 use Tether\ErrorBoundary;
 use Tether\Invokable;
 use Tether\JsException;
+use Tether\Testing\Tab;
 
 /** A component for these tests: what it did, in $log; its behaviour, from its $mode prop. */
 final class Probe extends Component
@@ -178,13 +179,12 @@ test('mount() runs once per instance, with the props set, before the first rende
 });
 
 test('an invocation gets the handler\'s return value, after the frame that shows the new state', function () {
-    $out = live(Probe::class, [], static function (Circuit $circuit) {
-        $circuit->event('c1', 'add', [5], reply: 1, value: true);
-        phasync::sleep(0.02);
+    Tab::mount(Probe::class, [], function (Tab $tab) {
+        expect($tab->invoke('add', [5]))->toBe(5);
+        $frame = $tab->frames[0];
+        expect($frame['patches'][0]['html'])->toBe('<p tether-id="c1">5</p>');
+        expect($frame['replies'])->toBe([['r' => 1, 'v' => 5]]);
     });
-    $frame = $out['frames'][0];
-    expect($frame['patches'][0]['html'])->toBe('<p tether-id="c1">5</p>');
-    expect($frame['replies'])->toBe([['r' => 1, 'v' => 5]]);
 });
 
 test('arguments must match the handler\'s parameter types and count', function (string $method, array $args) {
@@ -217,13 +217,11 @@ test('variadic handlers take any number of arguments of their type', function ()
 });
 
 test('a call into the browser returns what the browser answers', function () {
-    $out = live(Probe::class, [], static function (Circuit $circuit) {
-        $circuit->event('c1', 'callBrowser', [], reply: 1, value: true);
-        phasync::sleep(0.02);
-    }, browser: static fn (array $op, Circuit $circuit) => $circuit->returned($op['i'], 'forty-two', null));
-    $op = array_values(array_filter($out['frames'], static fn ($f) => 'op' === $f['t']))[0];
-    expect($op)->toMatchArray(['o' => 'path', 'p' => 'Probe.answer', 'a' => [42]]);
-    expect(replies($out['frames'])[1]['v'])->toBe('forty-two');
+    Tab::mount(Probe::class, [], function (Tab $tab) {
+        expect($tab->invoke('callBrowser'))->toBe('forty-two');
+        $op = array_values(array_filter($tab->frames, static fn ($f) => 'op' === $f['t']))[0];
+        expect($op)->toMatchArray(['o' => 'path', 'p' => 'Probe.answer', 'a' => [42]]);
+    }, browser: static fn (array $op) => 'forty-two');
 });
 
 test('a JavaScript error comes back as a JsException', function () {

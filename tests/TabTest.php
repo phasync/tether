@@ -1,0 +1,184 @@
+<?php
+
+use Tether\Component;
+use Tether\Event\KeyboardEventArgs;
+use Tether\Invokable;
+use Tether\JsException;
+use Tether\Tether;
+use Tether\Testing\Tab;
+
+final class TabCounter extends Component
+{
+    public int $count = 0;
+
+    public function increment(int $by = 1): void
+    {
+        $this->count += $by;
+    }
+
+    public function key(KeyboardEventArgs $e): void
+    {
+        $this->count += 'Enter' === $e->key ? 100 : 0;
+    }
+
+    #[Invokable]
+    public function double(): int
+    {
+        return $this->count * 2;
+    }
+
+    public function explode(): void
+    {
+        throw new RuntimeException('boom');
+    }
+
+    #[Invokable]
+    public function width(): mixed
+    {
+        return $this->browser()->window->innerWidth;
+    }
+
+    public function run(): void
+    {
+        phasync::sleep(0.03);
+        $this->count = -1; // changed without requestRender(): the browser is not told
+    }
+
+    public function render(): string
+    {
+        return "<p class=\"n\">{$this->count}</p>";
+    }
+}
+
+final class TabItem extends Component
+{
+    public string $label = '';
+
+    public bool $done = false;
+
+    public function toggle(): void
+    {
+        $this->done = !$this->done;
+    }
+
+    public function render(): string
+    {
+        return '<li>' . ($this->done ? 'x ' : '') . htmlspecialchars($this->label) . '</li>';
+    }
+}
+
+final class TabList extends Component
+{
+    public int $renders = 0;
+
+    public function render(): string
+    {
+        ++$this->renders;
+
+        return '<ul>' . $this->child(TabItem::class, ['label' => 'a'], 'a') . $this->child(TabItem::class, ['label' => 'b'], 'b') . '</ul>';
+    }
+}
+
+test('mount renders the page; an event runs its handler and the tab is idle when the new HTML is in', function () {
+    Tab::mount(TabCounter::class, ['count' => 3], function (Tab $tab) {
+        expect($tab->html())->toBe('<p tether-id="c1" class="n">3</p>');
+        $tab->call('increment', [4]);
+        expect($tab->html())->toBe('<p tether-id="c1" class="n">7</p>');
+        $tab->call('increment');
+        expect($tab->html())->toContain('>8<');
+    });
+});
+
+test('a child that renders alone shows in the root\'s HTML, and html($id) gives one component', function () {
+    Tab::mount(TabList::class, [], function (Tab $tab) {
+        expect($tab->html())->toBe('<ul tether-id="c1"><li tether-id="c2">a</li><li tether-id="c3">b</li></ul>');
+        $tab->call('toggle', id: 'c3');
+        expect($tab->html())->toBe('<ul tether-id="c1"><li tether-id="c2">a</li><li tether-id="c3">x b</li></ul>')
+            ->and($tab->html('c3'))->toBe('<li tether-id="c3">x b</li>')
+            ->and($tab->frames[0]['patches'])->toHaveCount(1);
+    });
+});
+
+test('the browser\'s refusals apply: not a handler, wrong arguments', function (string $method, array $args, string $id) {
+    Tab::mount(TabCounter::class, [], function (Tab $tab) use ($method, $args, $id) {
+        expect(fn () => $tab->call($method, $args, $id))->toThrow(InvalidArgumentException::class);
+    });
+})->with([
+    'render'     => ['render', [], 'c1'],
+    'a missing'  => ['nope', [], 'c1'],
+    'a string'   => ['increment', ['5'], 'c1'],
+    'too many'   => ['increment', [1, 2], 'c1'],
+]);
+
+test('an event for a component that is not in the page is an error in the test, not ignored as in the browser', function () {
+    Tab::mount(TabCounter::class, [], function (Tab $tab) {
+        expect(fn () => $tab->call('increment', id: 'c9'))->toThrow(LogicException::class, 'No component c9');
+    });
+});
+
+test('event data goes to a handler typed with its event class', function () {
+    Tab::mount(TabCounter::class, [], function (Tab $tab) {
+        $tab->call('key', payload: ['type' => 'keydown', 'key' => 'Enter']);
+        expect($tab->html())->toContain('>100<');
+    });
+});
+
+test('invoke gives an Invokable handler\'s return value; one that is not Invokable is refused', function () {
+    Tab::mount(TabCounter::class, ['count' => 21], function (Tab $tab) {
+        expect($tab->invoke('double'))->toBe(42);
+        expect(fn () => $tab->invoke('increment'))->toThrow(InvalidArgumentException::class);
+    });
+});
+
+test('a scripted browser answers the calls into it', function () {
+    $ops = [];
+    $answers = static function (array $op) use (&$ops) {
+        $ops[] = $op;
+
+        return 1024;
+    };
+    expect(Tab::mount(TabCounter::class, [], fn (Tab $tab) => $tab->invoke('width'), browser: $answers))->toBe(1024)
+        ->and($ops[0])->toMatchArray(['t' => 'op']);
+});
+
+test('a scripted browser that throws a JsException is a JavaScript error: the handler fails and the tab crashes', function () {
+    $fails = static fn () => throw new JsException('no window', 'TypeError');
+    Tab::mount(TabCounter::class, [], function (Tab $tab) {
+        expect(fn () => $tab->invoke('width'))->toThrow(JsException::class, 'no window');
+        expect($tab->crashed)->toBeInstanceOf(JsException::class);
+        expect(fn () => $tab->html())->toThrow(JsException::class);
+    }, browser: $fails);
+});
+
+test('a handler that fails crashes the tab: crashed is set, and html() throws it', function () {
+    Tab::mount(TabCounter::class, [], function (Tab $tab) {
+        $tab->call('explode');
+        expect($tab->crashed?->getMessage())->toBe('boom');
+        expect(fn () => $tab->html())->toThrow(RuntimeException::class, 'boom');
+    });
+});
+
+test('advance lets run() work, and what it changed without requestRender() is not in the HTML', function () {
+    Tab::mount(TabCounter::class, ['count' => 5], function (Tab $tab) {
+        $tab->advance(0.06);
+        expect($tab->html())->toContain('>5<');
+    });
+});
+
+test('a page closure runs as it does for a live connection, with the request', function () {
+    $seen = [];
+    $request = new phasync\Psr\ServerRequest('GET', '/n/7', new phasync\Psr\StringStream(''), ['Host' => 'example.test']);
+    Tab::page(function (Tether $t) use (&$seen) {
+        $seen[] = $t->live;
+
+        return $t->mount(TabCounter::class, ['count' => 9], 'Nine');
+    }, function (Tab $tab) {
+        $tab->call('increment');
+        expect($tab->html())->toContain('>10<');
+    }, request: $request);
+    expect($seen)->toBe([true]);
+});
+
+test('a page closure that returns anything but a Page is an error', function () {
+    expect(fn () => Tab::page(fn () => 'nope', fn () => null))->toThrow(LogicException::class);
+});
