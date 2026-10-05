@@ -5,6 +5,7 @@
 use phasync\Psr\Response;
 use Plain\Chat;
 use Plain\Counter;
+use Plain\Form;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -16,6 +17,9 @@ return new class implements RequestHandlerInterface {
         $path = $request->getUri()->getPath();
         if ('/' === $path) {
             return Tether::from($request, fn (Tether $t) => $t->mount(Counter::class, ['count' => (int) ($request->getQueryParams()['start'] ?? 0)], 'Counter'));
+        }
+        if ('/form' === $path) {
+            return Tether::from($request, fn (Tether $t) => $t->mount(Form::class, [], 'Form'));
         }
         if (preg_match('#^/chat/(\w+)$#', $path, $room)) {
             $user = $request->getCookieParams()['user'] ?? '';

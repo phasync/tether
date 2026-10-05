@@ -110,6 +110,32 @@ final class Tab
         throw $this->crashed ?? new \LogicException('The handler gave no reply');
     }
 
+    /**
+     * Assert that every handler the page's tether-* attributes name is one the browser may call
+     * in the component the attribute is in: a misspelled name, a private method or a missing
+     * one fails here, not when a user clicks. Markup a hook inserts is not in the HTML.
+     *
+     * @throws \LogicException
+     */
+    public function assertHandlers(): void
+    {
+        $document = new \DOMDocument();
+        $document->loadHTML('<?xml encoding="utf-8"?>' . $this->html(), \LIBXML_NOERROR | \LIBXML_NOWARNING);
+        $xpath  = new \DOMXPath($document);
+        $absent = [];
+        foreach ($xpath->query('//*[@*[starts-with(name(), "tether-")]]') as $element) {
+            $component = $this->circuit->component($xpath->evaluate('string(ancestor-or-self::*[@tether-id][1]/@tether-id)', $element));
+            foreach ($element->attributes as $attribute) {
+                if (\preg_match('/^tether-(on-[\w-]+|click|input|change|submit|keydown)(\.|$)/', $attribute->name) && !Circuit::isHandler($component, \trim($attribute->value))) {
+                    $absent[] = "{$attribute->name}=\"{$attribute->value}\" in " . $component::class;
+                }
+            }
+        }
+        if ($absent) {
+            throw new \LogicException('Not event handlers: ' . \implode('; ', $absent));
+        }
+    }
+
     /** Let the tab's coroutines run for $seconds (run() loops, timers), then wait until it is idle. */
     public function advance(float $seconds): void
     {

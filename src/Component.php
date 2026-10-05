@@ -21,11 +21,14 @@ use Psr\Http\Message\ServerRequestInterface;
  *   of it is the component's.
  * - requestRender(): render again soon: in the tab's next frame. Called many times in a row,
  *   it still renders once. After an event handler, the component renders by itself.
+ * - propsChanged(): optional; runs when the parent gave it props that differ, before the render.
+ * - dispose(): optional; runs once when it leaves the page, after its coroutines were cancelled.
  * - Event handlers: public methods of the component's own class, called from the browser
- *   (`tether-click="increment"`, or a hook's push()). Anyone can call them with any JSON
+ *   (`tether-click="increment"`, or a hook's this.invoke()). Anyone can call them with any JSON
  *   arguments: the arguments must match the parameter types, and the handler checks the rest.
  *   Its return value goes back to the browser's Tether.invoke() when the handler is marked
  *   #[Invokable].
+ * - bind(): the attributes of a field that sets a #[Bind] property as the user types.
  * - browser(): call the browser, as in V8Js: functions, properties, elements, Promises.
  * - awaitRender(): wait until the browser shows the component's current state.
  * - request(): the request of the tab: the page's request when it renders, the upgrade when live.
@@ -50,6 +53,26 @@ abstract class Component
     }
 
     public function run(): void
+    {
+    }
+
+    /**
+     * The component's parent rendered it again with props that differ from the last render's
+     * ($old: the props it had, by name). Runs before the render, synchronously as mount() does.
+     * An object among the props always counts as different: it may have changed inside.
+     *
+     * @param array<string, mixed> $old
+     */
+    public function propsChanged(array $old): void
+    {
+    }
+
+    /**
+     * The component left the page (its parent stopped rendering it, or the tab closed): release
+     * what it holds. Its coroutines were cancelled already, and its children's dispose() ran. A
+     * failure is logged, and does not stop the others.
+     */
+    public function dispose(): void
     {
     }
 
@@ -131,6 +154,72 @@ abstract class Component
     final protected function request(): ServerRequestInterface
     {
         return $this->circuit->request();
+    }
+
+    /**
+     * Whether this is a live tab: false while the page's first HTML is rendered, when mount() has
+     * run for it and there is no browser to call.
+     */
+    final protected function isLive(): bool
+    {
+        return $this->circuit?->isLive() ?? false;
+    }
+
+    /** $text as it is written into HTML, in an attribute or between tags. */
+    final protected function e(string|\Stringable|int|float|null $text): string
+    {
+        return \htmlspecialchars((string) $text, \ENT_QUOTES | \ENT_SUBSTITUTE);
+    }
+
+    /**
+     * The attributes of a field that sets the public #[Bind] property $property as the user
+     * types: its current value (`checked` for a bool), and the event that sends the new one.
+     * With $option, a radio button: it is checked when the property is $option.
+     *
+     * ```php
+     * <input type="text" name="name" {$this->bind('name')}>
+     * <input type="checkbox" {$this->bind('subscribe')}>
+     * <input type="radio" name="plan" {$this->bind('plan', 'free')}>
+     * ```
+     *
+     * A select takes the same, with `selected` on its options; a textarea's text is written
+     * between its tags. A number field's property must be nullable to take an empty field.
+     * The browser's value that does not fit the property's type is refused.
+     *
+     * @throws \LogicException the property is not a public #[Bind] property of a supported type
+     */
+    final protected function bind(string $property, ?string $option = null): string
+    {
+        $reflection = new \ReflectionProperty($this, $property);
+        $type       = $reflection->getType();
+        if (!$reflection->isPublic() || !$reflection->getAttributes(Bind::class)) {
+            throw new \LogicException(static::class . "::\$$property is not a public #[Bind] property");
+        }
+        if (null !== $type && (!$type instanceof \ReflectionNamedType || !(\in_array($type->getName(), ['string', 'int', 'float', 'bool', 'array', 'mixed'], true) || \is_subclass_of($type->getName(), \BackedEnum::class)))) {
+            throw new \LogicException(static::class . "::\$$property: #[Bind] takes a string, int, float, bool, array or backed enum, nullable or not");
+        }
+        $value = $this->$property;
+        $value = $value instanceof \BackedEnum ? $value->value : $value;
+        $args  = ' tether-args="' . $this->e(\json_encode([$property], \JSON_THROW_ON_ERROR)) . '"';
+        if (null !== $option) {
+            return 'value="' . $this->e($option) . '"' . ((string) $value === $option ? ' checked' : '') . ' tether-change="bound"' . $args;
+        }
+        if (\is_bool($value)) {
+            return ($value ? 'checked ' : '') . 'tether-change="bound"' . $args;
+        }
+
+        return 'value="' . $this->e(\is_array($value) ? '' : $value) . '" tether-input="bound"' . $args;
+    }
+
+    /**
+     * The handler of the fields bind() makes: sets a #[Bind] property to the value of the field.
+     * The browser's call is checked against the property, so no other property is reachable.
+     *
+     * @internal
+     */
+    final public function bound(string $property, mixed $value): void
+    {
+        $this->$property = $value;
     }
 
     /** @internal */

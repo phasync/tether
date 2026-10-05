@@ -51,7 +51,8 @@ service, a widget, an LLM panel. The rest of the page keeps working.
 A failure with no boundary above crashes the tab: every component is unmounted, the connection
 closes, and the browser reconnects and mounts the page from scratch, as after a restart. The
 user sees the page come back in its initial state (with whatever storage and the session hold).
-While disconnected, `<html>` has the attribute `tether-offline`, for a "Reconnecting…" style:
+While connected `<html>` has `tether-live`; while disconnected `tether-offline`, for a "Reconnecting…" style. When the server
+crashed the tab, `tether-crashed` is set too (1011), until the reconnect:
 
 ```css
 html[tether-offline] body::before { content: 'Reconnecting…'; position: fixed; inset: 0 0 auto 0; background: #fd6; text-align: center }

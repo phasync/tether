@@ -31,6 +31,21 @@ final class Ticker extends Component
     }
 }
 
+final class Counted extends Component
+{
+    public int $n = 0;
+
+    public function count(): void
+    {
+        ++$this->n;
+    }
+
+    public function render(): string
+    {
+        return "<div>{$this->n}</div>";
+    }
+}
+
 /** Three levels of tickers; runs $act on the circuit and reports which kept ticking after it. */
 function ticking_after(Closure $act): array
 {
@@ -95,11 +110,11 @@ test('frames are sent at most maxFps times a second, each with the latest state'
     $frames = phasync::run(function () {
         $frames  = [];
         $circuit = new Circuit(static function (array $frame) use (&$frames) { $frames[] = microtime(true); }, maxFps: 20);
-        $circuit->mount(Ticker::class, ['label' => 'fast']); // run() updates nothing, so drive it by events
+        $circuit->mount(Counted::class, []); // drive it by events
         $writer = phasync::go($circuit->run(...));
         $end    = microtime(true) + 0.5;
         while (microtime(true) < $end) {
-            $circuit->event('c1', 'hide', []); // 1000 state changes a second
+            $circuit->event('c1', 'count', []); // 1000 state changes a second
             phasync::sleep(0.001);
         }
         phasync::cancel($writer);

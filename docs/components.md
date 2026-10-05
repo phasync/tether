@@ -36,7 +36,7 @@ final class TodoList extends Component
         foreach ($this->items as $id => $text) {
             $items .= $this->child(TodoItem::class, ['text' => $text, 'onRemove' => fn () => $this->remove($id)], key: (string) $id);
         }
-        $draft = htmlspecialchars($this->draft);
+        $draft = $this->e($this->draft);
 
         return <<<HTML
             <section>
@@ -57,11 +57,18 @@ final class TodoList extends Component
 
 - Returns **exactly one root element**. Tether adds a `tether-id` attribute to it: that is how
   the browser knows which part of the page is which component.
-- Returns HTML: **escape** everything that comes from users, with `htmlspecialchars()`.
+- Returns HTML: **escape** everything that comes from users, with `$this->e()` (`htmlspecialchars()` for text and quoted attributes).
 - Is called whenever the component must be shown again; it should only read state. Loading
   data belongs in `mount()`, event handlers or `run()`.
 - `$this->child(Class::class, $props, key: ...)` places a child component and returns its HTML.
 - `$this->request()` is the PSR-7 request of the tab (see [State](state.md#the-tab-is-a-request)).
+- `$this->isLive()` is false while the page's first HTML is rendered and true in the live tab.
+
+**What the browser keeps.** A render only changes what the server changed. What the page did to
+an element, a typed value, `checked`, a chosen option, `<details open>`, a class added by a
+script, stays as it is, as long as the server's HTML for that attribute is the same as in its
+last render. When the server's HTML for it changes, the server wins. `tether-keep="class style"`
+lists attributes the server never overwrites once the element is on the page.
 
 ## Props and children
 
@@ -74,10 +81,13 @@ A child is identified by its class and **key**, or, without a key, by its class 
 among its siblings of that class. It keeps its state (its own properties, its coroutines) for
 as long as the parent keeps placing it; when a render no longer places it, it is unmounted,
 with its own children. Give children rendered in a loop a key, so each keeps its state when the
-list changes.
+list changes. A component is unmounted by `dispose()`, which runs after its coroutines are cancelled:
+release what `mount()` took that is not garbage collected (a subscription, a file).
 
 A child is rendered again when it is new, when its props changed, or when it asked to be
-(`requestRender()`). Otherwise the parent's frame reuses its last HTML and the browser leaves
+(`requestRender()`). Props compare with `===`, so an object, which is never `===` to a new one,
+counts as changed; share one object between components (a context, a store) and the parent's
+render updates its children. `propsChanged($old)` runs on a child whose props differ, before it renders. Otherwise the parent's frame reuses its last HTML and the browser leaves
 its part of the page alone: focus, selection, a half-typed input survive a parent's update.
 
 **Telling the parent something**: pass a closure. When the child calls it, the parent renders
@@ -122,8 +132,11 @@ over from 1 to 2, and anything `mount()` does, it does twice. That is harmless f
 (loading a channel's messages) and wrong for side effects (posting a "joined" message): put
 live-only work in `run()`.
 
-After a lost connection, the browser reconnects and mounts from scratch: property state is gone.
-State that must survive a reconnect, a reload or a deploy belongs in storage or the session.
+After a lost connection, the browser reconnects and mounts from scratch: property state is gone,
+and so is what the user typed. State that must survive a reconnect, a reload or a deploy belongs
+in storage or the session. For a `Tether::from()` page the route runs again for the URL the page
+was rendered for, not for what the address bar shows now: keep the address current with
+`history.replaceState()` in a hook if the route reads it.
 
 ## mount()
 
@@ -138,6 +151,7 @@ public function mount(): void
 ```
 
 It runs inside a render, so keep it short. It may not call `browser()`: nothing is in the browser yet.
+`mount()` is synchronous on purpose: the first frame has the data.
 
 While `mount()` waits (a query, a request), the component and its parents are not on screen, and
 nothing else of the page is sent until it returns. For slow data, render a placeholder and load
@@ -240,6 +254,9 @@ request, runs until it ends or the tab closes, and its failures are only logged.
 
 Event handlers render their component by themselves when they return. Anywhere else (in
 `run()`, in a coroutine, in a callback) call `$this->requestRender()` after changing state.
+A render that gives the HTML the browser already has sends nothing. A handler that changes nothing
+the page shows can skip the render with `#[Tether\NoRender]`; the component still renders
+when anything else marks it.
 
 It does not render at once: it marks the component for the tab's next frame. Each tab has one
 writer coroutine that wakes when something is marked, renders every marked component once,
@@ -247,6 +264,30 @@ parents first, and sends them in one message; then it waits at least 1/30 s befo
 A component that changes 1,000 times a second is sent 30 times a second, with its latest
 state. A client that reads slowly makes the writer wait, and changes keep collecting: it gets
 fewer frames, never a backlog.
+
+## Forms: bind()
+
+Fields that set a property as the user types: mark it `#[Bind]` and put `bind()` in the tag.
+
+```php
+#[Bind]
+public string $name = '';
+#[Bind]
+public bool $subscribe = false;
+
+public function render(): string
+{
+    return "<div><input name=\"name\" {$this->bind('name')}> <input type=\"checkbox\" {$this->bind('subscribe')}></div>";
+}
+```
+
+`bind()` writes the value (`checked` for a bool) and the event that sends the new one; a radio
+button takes the option it stands for, `bind('plan', 'free')`. A `<select>` takes the same, with
+`selected` on the option, and a textarea's text goes between its tags. The property is a string,
+int, float, bool, array of strings or a backed enum, each nullable; a value that does not fit
+(a letter in an int) is refused: nothing changes, the field shows the value the server last
+rendered again, and the page hears it in `tetherrefused`. Only `#[Bind]` properties can be set this way.
+`bound()` is the handler behind it; `$tab->call('bound', ['name', 'Ada'])` in a [test](testing.md).
 
 ## Event handlers
 

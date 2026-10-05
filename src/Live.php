@@ -153,9 +153,9 @@ final class Live
                         continue;
                     }
                     $circuit->navigate($message['u'], (bool) ($message['p'] ?? true));
-                } elseif (\is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_int($message['r'] ?? 0) && \is_array($message['e'] ?? [])) {
+                } elseif (\is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_array($message['v'] ?? []) && \is_int($message['r'] ?? 0) && \is_array($message['e'] ?? [])) {
                     try {
-                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null, $message['e'] ?? [], true === ($message['x'] ?? false));
+                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null, $message['e'] ?? [], true === ($message['x'] ?? false), $message['v'] ?? []);
                     } catch (\InvalidArgumentException $e) {
                         Swerve::log()->warning('Tether: {message}', ['message' => $e->getMessage()]);
                     }

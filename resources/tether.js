@@ -12,7 +12,13 @@
 //   (rel). Each patch is a component's new HTML, morphed into its element. The inside of a child component is left
 //   alone unless the child was rendered too (it is in the patch's fresh list): a parent's update
 //   never disturbs a child's DOM, focus or input. An element with tether-ignore is never
-//   touched once on the page.
+//   touched once on the page. What the page did to an element (a typed value, checked, selected,
+//   open, a class a script added) survives a render unless the server's HTML for that attribute
+//   changed since the last one; tether-keep="attr ..." lists attributes the server never overwrites.
+// - Connection: <html> has tether-live or tether-offline (and tether-crashed after a server error), the
+//   document gets tetherconnection events, Tether.reconnect() connects at once, and a refused call is
+//   a console.error and a tetherrefused event. An event is sent as {c, m, a: tether-args, v: the field's
+//   value}; the server joins them into the handler's parameters.
 // - Hooks: Tether.hook('Name', {mounted() {}, updated() {}, destroyed() {}, ...methods}) gives
 //   every element with tether-hook="Name" an instance, while the tab is live: this.el is the
 //   element, this.invoke(method, ...args) calls a #[Invokable] handler of its component and
@@ -60,6 +66,8 @@
   let live = false;
   let backoff = 250;
   let settled = 0; // timer: the connection has stayed open long enough to start the backoff over
+  let retry = 0; // timer: the next attempt to connect
+  let attempt = 0; // connections that failed since the last live one
   let nextReply = 0;
   let lim = { eps: 200, burst: 400, bytes: 524288 }; // the server's limits, from the mount frame
 
@@ -77,7 +85,18 @@
     }
   };
 
+  // The connection's state, for the page's styles (tether-live, tether-offline and tether-crashed
+  // on <html>) and its scripts (the tetherconnection event on document)
+  function state(name, detail = {}) {
+    const html = document.documentElement;
+    html.toggleAttribute('tether-live', name === 'live');
+    html.toggleAttribute('tether-offline', name === 'offline');
+    html.toggleAttribute('tether-crashed', !!detail.crashed);
+    document.dispatchEvent(new CustomEvent('tetherconnection', { detail: { state: name, attempt, ...detail } }));
+  }
+
   function connect() {
+    retry = 0;
     socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${liveUrl}`);
     socket.onopen = () => {
       socket.send(JSON.stringify(!mount ? {} : app ? { u: here() } : mount));
@@ -94,12 +113,12 @@
     socket.onclose = (event) => {
       clearTimeout(settled);
       live = false;
+      rendered = new WeakMap();
       discardPaced();
       if (event.code === 1008 && mount) {
         location.reload();
         return;
       }
-      document.documentElement.setAttribute('tether-offline', '');
       for (const [element, instance] of instances) {
         instances.delete(element);
         call(() => instance.destroyed?.());
@@ -115,10 +134,18 @@
           handles.delete(id);
         }
       }
+      const crashed = event.code === 1011;
+      if (crashed) {
+        console.warn('Tether: the server failed this tab; reconnecting');
+      }
       if (event.code === 1008) {
+        state('offline', { retryMs: null });
         return;
       }
-      setTimeout(connect, backoff * (0.5 + Math.random() / 2));
+      const retryMs = backoff * (0.5 + Math.random() / 2);
+      ++attempt;
+      state('offline', { crashed, retryMs: Math.round(retryMs) });
+      retry = setTimeout(connect, retryMs);
       backoff = Math.min(backoff * 2, 30000);
     };
   }
@@ -159,6 +186,13 @@
       if (slot) {
         acks.delete(reply.r);
         slot.inflight--;
+        if ('e' in reply) {
+          console.error('Tether: the call was refused:', reply.e);
+          if (slot.b.handler === 'bound') {
+            restore(slot.b.el);
+          }
+          slot.b.el.dispatchEvent(new CustomEvent('tetherrefused', { bubbles: true, detail: { handler: slot.b.handler, message: reply.e } }));
+        }
         drain(slot);
       } else {
         others.push(reply);
@@ -166,11 +200,13 @@
     }
     for (const refused of frame.refused ?? []) {
       console.error('Tether: the call was refused', refused.m);
+      document.dispatchEvent(new CustomEvent('tetherrefused', { detail: { handler: refused.m, message: 'The call was refused' } }));
     }
     if (frame.t === 'mount') {
       // The whole tree, from a fresh mount: every component's HTML is new
       live = true;
-      document.documentElement.removeAttribute('tether-offline');
+      attempt = 0;
+      state('live');
       const root = document.querySelector('[tether-id]');
       morph(root, frame.html, null, morphed);
       bindTree(document.body);
@@ -204,6 +240,35 @@
   // in flight or waiting, so a patch must not write what the server last knew over it
   const typing = (element) => (bindings.get(element)?.list ?? []).some((b) => b.slot.inflight > 0 || b.slot.waiting || b.slot.queue.length);
 
+  // The attributes the server last rendered for each element (a textarea's text as its value). A
+  // patch writes only what the server changed since: what the page did to the rest (typed text,
+  // an open <details>, a class a script added) stays. A reconnect starts over.
+  let rendered = new WeakMap();
+  const attrs = (el) => {
+    const found = Object.fromEntries(Array.from(el.attributes, (a) => [a.name, a.value]));
+    if (el.localName === 'textarea') {
+      found.value = el.defaultValue;
+    }
+    return found;
+  };
+  // A field the server refused the value of shows what it last rendered again (a radio button
+  // gives the check back to its group)
+  function restore(el) {
+    for (const field of el.type === 'radio' ? document.getElementsByName(el.name) : [el]) {
+      const was = rendered.get(field);
+      if (field.localName === 'select') {
+        for (const option of field.options) {
+          option.selected = option.defaultSelected;
+        }
+      } else if (field.type === 'checkbox' || field.type === 'radio') {
+        field.checked = 'checked' in was;
+      } else {
+        field.value = was.value ?? '';
+      }
+    }
+  }
+  let incoming = null; // the server's version of the element being morphed
+
   // fresh: ids rendered in this patch, or null for all. morphed collects the hook elements
   // morphed in place.
   function morph(element, html, fresh, morphed) {
@@ -218,6 +283,7 @@
           if (oldNode.hasAttribute('tether-ignore')) {
             return false;
           }
+          incoming = newNode;
           const child = oldNode.getAttribute('tether-id');
           if (fresh === null || !child || child === id || fresh.has(child)) {
             return true;
@@ -226,19 +292,30 @@
           return child !== newNode.getAttribute('tether-id');
         },
         beforeAttributeUpdated(name, node) {
-          // false: leave the attribute (and the field's live value) as the user has it
+          // false: leave the attribute (and the field's live value) as the page has it
+          if ((node.getAttribute('tether-keep') ?? '').split(/\s+/).includes(name)) {
+            return false;
+          }
+          const was = rendered.get(node);
+          if (was && (was[name] ?? null) === (attrs(incoming)[name] ?? null)) {
+            return false;
+          }
           return !((name === 'value' || name === 'checked') && node === document.activeElement && typing(node));
         },
         afterNodeAdded(node) {
           if (node.nodeType === 1) {
+            for (const el of [node, ...node.querySelectorAll('*')]) {
+              rendered.set(el, attrs(el));
+            }
             bindTree(node);
             if (node.hasAttribute('tether-hook')) {
               morphed.add(node);
             }
           }
         },
-        afterNodeMorphed(oldNode) {
+        afterNodeMorphed(oldNode, newNode) {
           if (oldNode.nodeType === 1) {
+            rendered.set(oldNode, attrs(newNode));
             bindElement(oldNode);
             if (oldNode.hasAttribute('tether-hook')) {
               morphed.add(oldNode);
@@ -950,8 +1027,8 @@
     }
   }
 
-  // The message: the component, the handler, the arguments (tether-args, then the field's
-  // value) and the event's data
+  // The message: the component, the handler, the arguments (tether-args), the field's value
+  // (it goes to the parameters tether-args left) and the event's data
   function extract(b, e) {
     const el = b.el;
     const component = el.closest('[tether-id]');
@@ -991,7 +1068,7 @@
         delete data[key];
       }
     }
-    return { c: component.getAttribute('tether-id'), m: b.handler, a: [...args, ...read], e: data };
+    return { c: component.getAttribute('tether-id'), m: b.handler, a: args, v: read, e: data };
   }
 
   // .delay-N: the event goes on after N ms, unless the one that ends it comes first
@@ -1257,6 +1334,14 @@
     handleCount: () => handles.size - 2,
     // Read the tether-* attributes of markup a hook inserted
     bind: bindTree,
+    // Connect now, instead of when the delay has passed (or after a refusal)
+    reconnect() {
+      if (live || socket?.readyState === WebSocket.CONNECTING) {
+        return;
+      }
+      clearTimeout(retry);
+      connect();
+    },
     debug: /[?&]tether-debug\b/.test(location.search) || (() => {
       try {
         return !!localStorage.tetherDebug;
@@ -1266,5 +1351,8 @@
     })(),
   };
 
+  for (const el of document.querySelectorAll('[tether-id], [tether-id] *')) {
+    rendered.set(el, attrs(el));
+  }
   connect();
 })();

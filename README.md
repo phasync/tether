@@ -89,11 +89,11 @@ and PHP 8.3 or later runs it. You don't have to start there:
 
 1. [Running Tether](docs/running.md): installing, `Tether::from()`, mini, the middleware and
    Apps, swerve, the demo, production.
-2. [Components](docs/components.md): props, render(), children, mount(), run(), go(), rendering.
+2. [Components](docs/components.md): props, render(), children, mount(), run(), go(), rendering, forms with `bind()`.
 3. [Apps and navigation](docs/apps.md): for several live pages: routes, pages, layouts that survive navigation.
 4. [Events and JavaScript](docs/events-and-javascript.md): every DOM event with modifiers
-   (`tether-on-pointermove.throttle-50`), typed event data, pacing and limits; hooks,
-   tether-ignore.
+   (`tether-on-pointermove.throttle-50`), typed event data, pacing and limits, connection
+   state; hooks, tether-ignore.
 5. [JavaScript interop](docs/javascript-interop.md): the server calls the browser and waits, V8Js-style
    (`call`, `executeString`, objects, Promises); the browser awaits handlers (`Tether.invoke`).
 6. [State, sessions and many users](docs/state.md): the tab's request, sign-in, the database,

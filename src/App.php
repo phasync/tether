@@ -84,7 +84,7 @@ abstract class App implements RequestHandlerInterface
             return $result;
         }
 
-        return Live::document((new Circuit(request: $request))->mount($result->class, $result->props), ['live' => "$base/.tether/live", 'base' => $base], $result->title, $this->head(), "$base/.tether");
+        return Live::document(Circuit::prerender($result->class, $result->props, $request), ['live' => "$base/.tether/live", 'base' => $base], $result->title, $this->head(), "$base/.tether");
     }
 
     /** HTML for the head of every page: the application's styles, and its scripts (defer). */

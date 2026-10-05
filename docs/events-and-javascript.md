@@ -104,7 +104,8 @@ public function react(int $messageId, string $emoji): void { /* ... */ }
 Build the JSON with `json_encode()` and escape it for the attribute
 (`htmlspecialchars(json_encode($args))`) when it holds anything a user wrote.
 
-**Fields.** `tether-input` and `tether-change` on a field send its value: a string, a number for
+**Fields.** `tether-input` and `tether-change` on a field send its value after the `tether-args`,
+into the parameters they leave (a handler may also take only an `EventArgs`, or nothing): a string, a number for
 `number` and `range`, `true`/`false` for a checkbox, the value of the chosen one for a radio,
 an `array` for `select multiple`. On a `<form>` (the events bubble from its fields) they send
 `[fields, name]`: all the fields, and the name of the one that changed. `tether-submit` sends the
@@ -148,6 +149,15 @@ without one, says so), and a message over 512 KiB is not sent. `new Tether\Limit
 changes them: the last parameter of `Tether::from()`, and of the `Tether` middleware and `App`
 constructors. Tether.debug (`?tether-debug`) tells in the console why an event was dropped or
 held back.
+
+Tether sends `{c, m, a, v}`: `a` is the `tether-args`, `v` what the event reads from its field,
+and the server joins them, so `tether-args` never takes a field's value by accident.
+
+Every refused call is a `console.error` and a `tetherrefused` event on the element (on the
+document for one with no reply), with `detail: {handler, message}`: a page can undo what it
+showed (a `bind()` field already shows the server's value again). `document` also gets `tetherconnection` with `detail: {state, attempt, crashed, retryMs}`; `state`
+is `live` or `offline`, and `<html>` has the attributes `tether-live`, `tether-offline` and, after
+the server crashed the tab, `tether-crashed`. `Tether.reconnect()` connects at once instead of waiting.
 
 ## Handlers
 

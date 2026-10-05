@@ -218,11 +218,10 @@ try {
     await pause(300);
     expect('while composing', await count('composed'), 0);
     await page.ime.commit('你');
-    await pause(200);
-    expect('before the composition ends', await count('composed'), 0);
-    // A real browser ends the composition itself, Chrome's Input.insertText does not
-    await page.eval(`document.querySelector('#ime').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: '你'}))`);
+    // The page is not rewritten under the composition, so Chrome ends it itself: the text is sent once, after that
     await waitFor('composed');
+    await pause(200);
+    expect('sent once', await count('composed'), 1);
     expect('value', (await last('composed')).value, '\u4f60');
   });
 
@@ -233,7 +232,8 @@ try {
     const d = await last('formInput');
     expect('input', [d.name, d.fields.a, d.fields.n], ['a', 'xz', '1']);
     await click('input[name=r][value=q]');
-    await waitFor('formChange');
+    // Leaving the field a, whose text the page keeps, is a change of its own: first
+    await page.until(`JSON.parse(document.querySelector('#seen').textContent).seen.formChange?.d.name === 'r'`);
     const c = await last('formChange');
     expect('change', [c.name, c.fields.r], ['r', 'q']);
   });

@@ -68,6 +68,55 @@ try {
     await page.eval(`history.back()`);
   });
 
+  await page.goto(new URL('/form', url).href);
+  await page.until(`window.sockets.length === 1 && document.documentElement.hasAttribute('tether-live')`);
+  await check('what the page did to its elements survives the server rendering again, unless the server changed it', async () => {
+    await page.eval(`(() => {
+      note.value = 'typed'; ok.checked = true; pick.value = 'b'; area.value = 'long text'; more.open = true;
+      mark.classList.add('js'); kept.className = 'changed by script'; follows.className = 'changed by script';
+    })()`);
+    for (let i = 0; i < 40 && await text('#ticks') !== '1'; ++i) {
+      await page.eval(`tick.click()`);
+      await pause(100);
+    }
+    const now = await page.eval(`JSON.stringify([note.value, ok.checked, pick.value, area.value, more.open, mark.className])`);
+    if (now !== JSON.stringify(['typed', true, 'b', 'long text', true, 'shown js'])) throw new Error(now);
+  });
+
+  await check('tether-keep lists the attributes the server never overwrites', async () => {
+    await page.eval(`tick.click()`);
+    await page.until(`ticks.textContent === '2'`);
+    const now = await page.eval(`JSON.stringify([follows.className, kept.className])`);
+    if (now !== JSON.stringify(['n2', 'changed by script'])) throw new Error(now);
+  });
+
+  await check('a field made by bind() sets the property as the user types, and an input\'s handler may take only the event', async () => {
+    await page.eval(`(() => { const set = (id, v) => { const i = document.getElementById(id); i.value = v; i.dispatchEvent(new Event('input', {bubbles: true})); }; set('name', 'Ada'); set('qty', '3'); set('args', 'raw'); })()`);
+    await page.until(`hello.textContent === 'Ada' && amount.textContent === '3' && typed.textContent === 'raw'`);
+  });
+
+  await check('a value the property can not take is refused: the page hears it in tetherrefused, the property stays and the field shows it again', async () => {
+    await page.eval(`window.refused = []; document.addEventListener('tetherrefused', (e) => window.refused.push(e.detail.handler)); qty.type = 'text'; qty.value = 'many'; qty.dispatchEvent(new Event('input', {bubbles: true}))`);
+    await page.until(`window.refused.length === 1`);
+    if (await text('#amount') !== '3') throw new Error('amount ' + await text('#amount'));
+    if (await page.eval(`qty.value`) !== '3') throw new Error('field ' + await page.eval(`qty.value`));
+  });
+
+  await check('Tether.reconnect() connects at once, and the connection\'s states are on <html> and in tetherconnection events', async () => {
+    await page.eval(`window.states = []; document.addEventListener('tetherconnection', (e) => window.states.push(e.detail.state + ':' + e.detail.attempt))`);
+    await page.eval(`window.sockets.at(-1).close()`);
+    await page.until(`document.documentElement.hasAttribute('tether-offline')`);
+    if (await page.eval(`(() => { const n = window.sockets.length; Tether.reconnect(); return window.sockets.length - n; })()`) !== 1) throw new Error('no connection at once');
+    await page.until(`window.sockets.length === 2 && document.documentElement.hasAttribute('tether-live')`);
+    const seen = await page.eval(`window.states.join() + document.documentElement.hasAttribute('tether-offline')`);
+    if (seen !== 'offline:1,live:0false') throw new Error(seen);
+  });
+
+  await check('a reconnect starts over: the page is the server\'s again', async () => {
+    await page.eval(`window.sockets.at(-1).close()`);
+    await page.until(`window.sockets.length === 3 && ticks.textContent === '0' && note.value === '' && !more.open && mark.className === 'shown'`);
+  });
+
   await page.goto(new URL('/login?name=ada', url).href);
   await check('a deep link renders on the server, goes live, and the route\'s parameter reaches the live tab', async () => {
     await page.goto(new URL('/chat/dev', url).href);

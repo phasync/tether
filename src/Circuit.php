@@ -67,6 +67,9 @@ final class Circuit
     /** @var array<string, true> ids rendered in the patch under way */
     private array $fresh = [];
 
+    /** Whether a component rendered in the patch under way gave other HTML than it did before */
+    private bool $changed = false;
+
     private ?Node $root = null;
 
     /** @var list<array> replies to the browser's calls for the next frame */
@@ -133,6 +136,27 @@ final class Circuit
         $this->abuse?->__invoke();
 
         return false;
+    }
+
+    /** @internal see Component::isLive() */
+    public function isLive(): bool
+    {
+        return null !== $this->send;
+    }
+
+    /**
+     * The first HTML of a page: $class mounted with $props in a tab with no browser, rendered, and
+     * unmounted again (null when it failed).
+     *
+     * @param class-string<Component> $class
+     */
+    public static function prerender(string $class, array $props, ?ServerRequestInterface $request = null): ?string
+    {
+        $circuit = new self(request: $request);
+        $html    = $circuit->mount($class, $props);
+        $circuit->close();
+
+        return $html;
     }
 
     public function request(): ServerRequestInterface
@@ -221,8 +245,9 @@ final class Circuit
      * value, which only a handler marked #[Invokable] may give.
      *
      * $payload is what the browser says about the event: the handler gets it as its last
-     * parameter when that is typed EventArgs or a subclass (never otherwise: $args alone fill
-     * the other parameters).
+     * parameter when that is typed EventArgs or a subclass. $read is the value of the field
+     * the event came from: it fills the parameters $args leave, and is dropped when there is
+     * none.
      *
      * An event the tab may not have (the bucket is empty, so the connection is closing) or
      * can not take (too many handlers running) is dropped, and refused when there is a reply or
@@ -230,7 +255,7 @@ final class Circuit
      *
      * @throws \InvalidArgumentException no such handler, or arguments it does not take
      */
-    public function event(string $id, string $method, array $args, ?int $reply = null, array $payload = [], bool $value = false): void
+    public function event(string $id, string $method, array $args, ?int $reply = null, array $payload = [], bool $value = false, array $read = []): void
     {
         if (!$this->admit()) {
             return;
@@ -240,7 +265,7 @@ final class Circuit
             if (null === $node) {
                 throw new \InvalidArgumentException('No component ' . self::printable($id) . ': it has left the page');
             }
-            $args = self::bind($node->component, $method, $args, $payload, $value);
+            $args = self::bind($node->component, $method, $args, $payload, $value, $read);
         } catch (\InvalidArgumentException $e) {
             if (null !== $reply) {
                 $this->reply($reply, error: $e->getMessage());
@@ -391,7 +416,12 @@ final class Circuit
             return $this->render($child);
         }
         // Rendered again when marked, given new props, or when its first render failed
-        if (self::setProps($child, $props) || isset($this->dirty[$child->component->tetherId]) || '' === $child->html) {
+        $old     = $child->props;
+        $changed = self::setProps($child, $props);
+        if ($changed) {
+            $this->build($child, fn () => $child->component->propsChanged($old));
+        }
+        if ($changed || isset($this->dirty[$child->component->tetherId]) || '' === $child->html) {
             return $this->render($child);
         }
 
@@ -434,7 +464,7 @@ final class Circuit
         \usort($marked, fn ($a, $b) => $this->nodes[$a]->depth <=> $this->nodes[$b]->depth);
         foreach ($marked as $id) {
             // Rendered with its parent already, or unmounted meanwhile
-            if (isset($this->dirty[$id], $this->nodes[$id]) && null !== ($patch = $this->patch($this->nodes[$id]))) {
+            if (isset($this->dirty[$id], $this->nodes[$id]) && null !== ($patch = $this->patch($this->nodes[$id])) && $this->changed) {
                 $frame['patches'][] = $patch;
             }
         }
@@ -473,10 +503,16 @@ final class Circuit
             $frame['nav'] = ['u' => $url, 't' => $page->title, 'p' => $push || ($frame['nav']['p'] ?? false)];
             $old          = $this->root;
             if ($page->class === $old->component::class) {
+                $before = $old->props;
                 try {
                     if (self::setProps($old, $page->props)) {
+                        $this->build($old, fn () => $old->component->propsChanged($before));
                         $this->dirty[$old->component->tetherId] = true;
                     }
+                } catch (RenderFailure $failure) {
+                    $this->fail(null, $failure->getPrevious());
+
+                    return false;
                 } catch (\InvalidArgumentException $e) {
                     $this->fail(null, $e);
 
@@ -513,7 +549,8 @@ final class Circuit
     {
         $skip = [];
         while (true) {
-            $this->fresh = [];
+            $this->fresh   = [];
+            $this->changed = false;
             try {
                 return ['id' => $node->component->tetherId, 'html' => $this->render($node), 'fresh' => \array_keys($this->fresh)];
             } catch (RenderFailure $failure) {
@@ -563,10 +600,22 @@ final class Circuit
         $component->attach($this, $id);
         $node = new Node($component, $parent, null === $parent ? 0 : $parent->depth + 1);
         self::setProps($node, $props);
+        $this->build($node, $component->mount(...));
+        $this->nodes[$id] = $node;
+        if (null !== $this->send) {
+            $this->start($node, fn () => $this->inbox($node));
+        }
+
+        return $node;
+    }
+
+    /** Run $fn, a call into $node's component that builds it (mount(), propsChanged()): a failure is the component's. */
+    private function build(Node $node, \Closure $fn): void
+    {
         $outer          = $this->building;
         $this->building = \Fiber::getCurrent();
         try {
-            $component->mount();
+            $fn();
         } catch (CancelledException $e) {
             throw $e;
         } catch (\Throwable $e) {
@@ -574,12 +623,6 @@ final class Circuit
         } finally {
             $this->building = $outer;
         }
-        $this->nodes[$id] = $node;
-        if (null !== $this->send) {
-            $this->start($node, fn () => $this->inbox($node));
-        }
-
-        return $node;
     }
 
     /**
@@ -618,7 +661,11 @@ final class Circuit
                             --$this->running;
                         }
                     }
-                    $this->requestRender($node->component);
+                    if ((new \ReflectionMethod($node->component, $method))->getAttributes(NoRender::class)) {
+                        \phasync::raiseFlag($this->flushed);
+                    } else {
+                        $this->requestRender($node->component);
+                    }
                 });
             }
             \phasync::awaitFlag($node);
@@ -705,7 +752,8 @@ final class Circuit
                 $this->unmount($this->nodes[$childId]);
             }
         }
-        $node->html = $html;
+        $this->changed = $this->changed || $html !== $node->html;
+        $node->html    = $html;
         $this->fresh[$node->component->tetherId] = true;
 
         return $html;
@@ -726,11 +774,35 @@ final class Circuit
                 \phasync::cancel($fiber);
             }
         }
+        try {
+            $node->component->dispose();
+        } catch (CancelledException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Swerve::log()->error('{component}::dispose() failed: {exception}', ['component' => $node->component::class, 'exception' => $e]);
+        }
+    }
+
+    /** Whether $value is, or holds, an object that may change inside while staying the same object. */
+    private static function mutable(mixed $value): bool
+    {
+        if (\is_array($value)) {
+            foreach ($value as $item) {
+                if (self::mutable($item)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return \is_object($value) && !$value instanceof \Closure && !$value instanceof \UnitEnum;
     }
 
     /**
      * Set a component's props; whether any changed. Closures don't count as a change: a
-     * parent creates them anew on every render.
+     * parent creates them anew on every render. An object does: it is the same object when it
+     * changed inside.
      */
     private static function setProps(Node $node, array $props): bool
     {
@@ -739,7 +811,7 @@ final class Circuit
             if (!\property_exists($node->component, $name) || !(new \ReflectionProperty($node->component, $name))->isPublic() || 'tetherId' === $name) {
                 throw new \InvalidArgumentException(\sprintf('%s has no public property $%s to take the prop', $node->component::class, $name));
             }
-            if (!\array_key_exists($name, $node->props) || (!$value instanceof \Closure && $node->props[$name] !== $value)) {
+            if (!\array_key_exists($name, $node->props) || (!$value instanceof \Closure && ($node->props[$name] !== $value || self::mutable($value)))) {
                 $changed = true;
             }
             $node->component->$name = $value;
@@ -750,26 +822,47 @@ final class Circuit
     }
 
     /**
+     * Whether the browser may call $method: a public method of the component's own class, none
+     * of Component's or ErrorBoundary's (but bound()).
+     */
+    public static function isHandler(Component $component, string $method): bool
+    {
+        if (!\method_exists($component, $method) || \str_starts_with($method, '__') || ('bound' !== $method && \method_exists(Component::class, $method)) || ($component instanceof ErrorBoundary && 'catch' === \strtolower($method))) {
+            return false;
+        }
+        $reflection = new \ReflectionMethod($component, $method);
+
+        return $reflection->isPublic() && !$reflection->isStatic();
+    }
+
+    /** @internal see Testing\Tab::assertHandlers() */
+    public function component(string $id): ?Component
+    {
+        return ($this->nodes[$id] ?? null)?->component;
+    }
+
+    /**
      * The browser may call $method with $args: a public method of the component's own class
      * (none of Component's or ErrorBoundary's), and arguments of its parameters' types. A last
      * parameter typed EventArgs (or a subclass) is not one of them: it gets $payload.
      *
      * With $value, the browser wants the result: the method must be #[Invokable].
      *
+     * $read, the value of a field, goes to the parameters $args leave. Component::bound() is
+     * the one method of Component's the browser may call: it sets a #[Bind] property, to the
+     * value cast to the property's type.
+     *
      * @return list<mixed> the arguments to call it with
      *
      * @throws \InvalidArgumentException
      */
-    private static function bind(Component $component, string $method, array $args, array $payload, bool $value): array
+    private static function bind(Component $component, string $method, array $args, array $payload, bool $value, array $read): array
     {
         $name = $component::class . '::' . self::printable($method) . '()';
-        if (!\method_exists($component, $method) || \str_starts_with($method, '__') || \method_exists(Component::class, $method) || ($component instanceof ErrorBoundary && 'catch' === \strtolower($method))) {
+        if (!self::isHandler($component, $method)) {
             throw new \InvalidArgumentException("$name is not an event handler");
         }
         $reflection = new \ReflectionMethod($component, $method);
-        if (!$reflection->isPublic() || $reflection->isStatic()) {
-            throw new \InvalidArgumentException("$name is not an event handler");
-        }
         if ($value && !$reflection->getAttributes(Invokable::class)) {
             throw new \InvalidArgumentException("$name is not #[Invokable]: its result is not for the browser");
         }
@@ -782,6 +875,7 @@ final class Circuit
             \array_pop($parameters);
             $required = \min($required, \count($parameters));
         }
+        $args = [...$args, ...\array_slice($read, 0, $reflection->isVariadic() ? null : \max(0, \count($parameters) - \count($args)))];
         if (!\array_is_list($args) || \count($args) < $required || (!$reflection->isVariadic() && \count($args) > \count($parameters))) {
             throw new \InvalidArgumentException(\sprintf('%s takes %d to %s arguments, not %d', $name, $required, $reflection->isVariadic() ? 'any' : \count($parameters), \count($args)));
         }
@@ -790,6 +884,9 @@ final class Circuit
             if (!self::accepts($parameter->getType(), $value)) {
                 throw new \InvalidArgumentException(\sprintf('%s: argument $%s must be %s, not %s', $name, $parameter->getName(), $parameter->getType(), \get_debug_type($value)));
             }
+        }
+        if ('bound' === $method) {
+            $args[1] = self::coerce($component, $args[0], $args[1]);
         }
         if (null !== $eventClass) {
             // Optional parameters between the arguments and the event take their defaults
@@ -804,6 +901,43 @@ final class Circuit
         }
 
         return $args;
+    }
+
+    /**
+     * The value a field gave for the #[Bind] property $name, as the property's type takes it.
+     *
+     * @throws \InvalidArgumentException not a #[Bind] property, or a value that does not fit it
+     */
+    private static function coerce(Component $component, string $name, mixed $value): mixed
+    {
+        $where = $component::class . '::$' . self::printable($name);
+        if (!\property_exists($component, $name) || !($property = new \ReflectionProperty($component, $name))->isPublic() || !$property->getAttributes(Bind::class)) {
+            throw new \InvalidArgumentException("$where is not a #[Bind] property");
+        }
+        $type = $property->getType();
+        if (null === $type) {
+            return $value;
+        }
+        if (('' === $value || null === $value) && $type->allowsNull()) {
+            return null;
+        }
+        $type = $type->getName();
+        $no   = fn () => throw new \InvalidArgumentException(\sprintf('%s: %s is not a value it takes', $where, \get_debug_type($value)));
+        if (\is_subclass_of($type, \BackedEnum::class)) {
+            $key = 'int' === (string) (new \ReflectionEnum($type))->getBackingType() ? \filter_var($value, \FILTER_VALIDATE_INT) : $value;
+
+            return (\is_string($value) || \is_int($value)) && (\is_string($key) || \is_int($key)) ? ($type::tryFrom($key) ?? $no()) : $no();
+        }
+
+        return match ($type) {
+            'mixed'  => $value,
+            'string' => \is_string($value) || \is_int($value) || \is_float($value) ? (string) $value : $no(),
+            'int'    => \is_int($value) || ((\is_string($value) || \is_float($value)) && false !== ($int = \filter_var($value, \FILTER_VALIDATE_INT))) ? ($int ?? $value) : $no(),
+            'float'  => (\is_int($value) || \is_float($value) || (\is_string($value) && \is_numeric($value))) && \is_finite((float) $value) ? (float) $value : $no(),
+            'bool'   => \is_bool($value) ? $value : $no(),
+            'array'  => \is_array($value) && \array_is_list($value) && \count($value) === \count(\array_filter($value, \is_string(...))) ? $value : $no(),
+            default  => $no(),
+        };
     }
 
     /** Text from the browser, for a message that is logged: short, on one line. */

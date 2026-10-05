@@ -45,6 +45,21 @@ final class EventSink extends Component
         self::$got[] = ['none'];
     }
 
+    public function field(string $value): void
+    {
+        self::$got[] = ['field', $value];
+    }
+
+    public function changed(ChangeEventArgs $e): void
+    {
+        self::$got[] = ['changed', $e->value];
+    }
+
+    public function tagged(string $tag, string $value): void
+    {
+        self::$got[] = ['tagged', $tag, $value];
+    }
+
     public function slow(): void
     {
         self::$peak = max(self::$peak, ++self::$running);
@@ -133,6 +148,25 @@ test('optional parameters before the event keep their defaults', function () {
     expect(EventSink::$got[0][1])->toBe(1)
         ->and(EventSink::$got[0][2]->clientX)->toBe(4.0)
         ->and(EventSink::$got[1][1])->toBe(5);
+});
+
+test('a field\'s value fills the parameters tether-args left, and is dropped when the handler has none', function () {
+    live(EventSink::class, [], function (Circuit $c) {
+        $c->event('c1', 'field', [], null, [], false, ['text']);
+        $c->event('c1', 'tagged', ['a'], null, [], false, ['text']);
+        $c->event('c1', 'none', [], null, [], false, ['text']);
+        $c->event('c1', 'changed', [], null, ['type' => 'input', 'value' => 'text'], false, ['text']);
+        $c->event('c1', 'typed', [7], null, ['type' => 'keydown'], false, ['text']);
+    });
+    expect(EventSink::$got)->toBe([['field', 'text'], ['tagged', 'a', 'text'], ['none'], ['changed', 'text'], ['typed', 7, EventSink::$got[4][2]]]);
+});
+
+test('a parameter the arguments and the field leave unfilled is still refused', function () {
+    $r = live(EventSink::class, [], function (Circuit $c) {
+        attempt(fn () => $c->event('c1', 'tagged', [], 1, [], false, ['text']));
+        attempt(fn () => $c->event('c1', 'field', [], 2, [], false, []));
+    });
+    expect(EventSink::$got)->toBe([])->and(array_keys(replies($r['frames'])))->toBe([1, 2]);
 });
 
 test('a trailing array parameter is never given the payload, and no typed parameter ignores it', function () {

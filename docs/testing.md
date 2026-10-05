@@ -41,6 +41,10 @@ Tab::page(fn (Tether $t) => $t->mount(Counter::class, ['count' => 3], 'Counter')
 - `$crashed` is what failed the tab (a handler or `run()` with no error boundary above it); after
   it `html()` throws it, and so does `invoke()`.
 
+`assertHandlers()` parses `html()` and throws a `LogicException` naming every `tether-click`,
+`tether-on-*` etc. whose handler is not one the browser may call in its component: a typo, a
+private method. `call('bound', ['name', 'Ada'])` is what a `bind()` field sends.
+
 Events are checked as the browser's are: calling something that is not a public method of the
 component's class, or with arguments of the wrong types, throws `InvalidArgumentException`.
 Naming a component that is not in the page throws `LogicException`, where the browser's event

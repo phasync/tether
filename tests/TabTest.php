@@ -2,7 +2,9 @@
 
 use Tether\Component;
 use Tether\Event\KeyboardEventArgs;
+use Tether\Circuit;
 use Tether\Invokable;
+use Tether\NoRender;
 use Tether\JsException;
 use Tether\Tether;
 use Tether\Testing\Tab;
@@ -181,4 +183,129 @@ test('a page closure runs as it does for a live connection, with the request', f
 
 test('a page closure that returns anything but a Page is an error', function () {
     expect(fn () => Tab::page(fn () => 'nope', fn () => null))->toThrow(LogicException::class);
+});
+
+final class TabLinks extends Component
+{
+    public string $handler = 'save';
+
+    public function save(): void
+    {
+    }
+
+    private function hidden(): void
+    {
+    }
+
+    public function render(): string
+    {
+        return "<div><button tether-click=\"save\">a</button><input tether-on-keydown.document.key-slash.nofield=\"{$this->handler}\" tether-args=\"[1]\"></div>";
+    }
+}
+
+test('assertHandlers passes when every handler named in the markup is one the browser may call', function () {
+    Tab::mount(TabLinks::class, [], fn (Tab $tab) => $tab->assertHandlers());
+    expect(true)->toBeTrue();
+});
+
+test('assertHandlers fails for a misspelled, a private and a missing handler, naming the attribute', function (string $handler) {
+    Tab::mount(TabLinks::class, ['handler' => $handler], function (Tab $tab) use ($handler) {
+        expect(fn () => $tab->assertHandlers())->toThrow(LogicException::class, "=\"$handler\"");
+    });
+})->with(['goo', 'hidden', 'render']);
+
+final class TabQuiet extends Component
+{
+    public int $count = 0;
+
+    public int $renders = 0;
+
+    public function touch(): void
+    {
+        $this->requestRender();
+    }
+
+    public function bump(): void
+    {
+        ++$this->count;
+    }
+
+    #[NoRender]
+    public function tally(): void
+    {
+        ++$this->count;
+    }
+
+    public function render(): string
+    {
+        ++$this->renders;
+
+        return "<p>{$this->count}</p>";
+    }
+}
+
+test('a render that gives the HTML the browser has sends no patch', function () {
+    Tab::mount(TabQuiet::class, [], function (Tab $tab) {
+        $before = count($tab->frames);
+        $tab->call('touch');
+        expect($tab->frames)->toHaveCount($before);
+        $tab->call('bump');
+        expect(count($tab->frames))->toBe($before + 1)->and($tab->html())->toContain('>1<');
+    });
+});
+
+test('a handler marked NoRender does not render the component', function () {
+    Tab::mount(TabQuiet::class, [], function (Tab $tab) {
+        $before = count($tab->frames);
+        $tab->call('tally');
+        expect($tab->frames)->toHaveCount($before)->and($tab->html())->toContain(">0<");
+        $tab->call('touch');
+        expect($tab->html())->toContain('>1<');
+    });
+});
+
+final class TabFlip extends Component
+{
+    public bool $on = false;
+
+    public function flip(): void
+    {
+        $this->on = !$this->on;
+    }
+
+    public function render(): string
+    {
+        return '<div>' . $this->child(TabFlipLeaf::class, ['on' => $this->on]) . '</div>';
+    }
+}
+
+final class TabFlipLeaf extends Component
+{
+    public bool $on = false;
+
+    public bool $forced = false;
+
+    public function force(): void
+    {
+        $this->forced = true;
+    }
+
+    public function propsChanged(array $old): void
+    {
+        $this->forced = false;
+    }
+
+    public function render(): string
+    {
+        return '<i>' . ($this->forced ? 'B' : 'A') . '</i>';
+    }
+}
+
+test('a child patched to new HTML and rendered back to the old one by its parent is sent again', function () {
+    Tab::mount(TabFlip::class, [], function (Tab $tab) {
+        $tab->call('force', [], 'c2');
+        expect($tab->html())->toContain('>B<');
+        $tab->call('flip');
+        expect($tab->html())->toContain('>A<');
+    });
 });

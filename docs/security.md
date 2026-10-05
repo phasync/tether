@@ -15,13 +15,14 @@ for it. Treat each like a POST route:
   driver and database messages stay on the server.
 - What a handler returns reaches the browser only when it is marked `#[Tether\Invokable]`
   (`Tether.invoke()`); that is the list of handlers whose results you have decided are public.
+- `bind()` makes only `#[Bind]` properties settable, cast to their type; every other property is out of reach.
 - Keep everything else `private` or `protected`. Methods of `Component` itself (`render`,
   `mount`, `run`, `browser`, ...) and an error boundary's `catch()` are never callable.
 
 ## Escaping
 
 `render()` returns HTML. Everything that comes from users, the database or other services must
-be escaped: `htmlspecialchars($value)` in text and in quoted attribute values. Never put user
+be escaped: `$this->e($value)` (`htmlspecialchars()`) in text and in quoted attribute values. Never put user
 input into `tether-*` attributes, `<script>`, `style` or URLs without checking it.
 
 ## Navigation

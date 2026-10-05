@@ -136,9 +136,11 @@ try {
   });
 
   await check('a failure with no boundary above starts the tab over: fresh state, hooks mounted again', async () => {
-    await page.eval(`window.lastReply = null`);
+    await page.eval(`window.lastReply = null; window.states = []; document.addEventListener('tetherconnection', (e) => window.states.push(e.detail.state + (e.detail.crashed ? ':crashed' : '')))`);
     await click('[tether-click=crash]');
     await page.until(`document.body.textContent.includes('Clicked 0 times')`, 5000);
+    const states = await page.eval(`window.states.join()`);
+    if (states !== 'offline:crashed,live') throw new Error('connection states ' + states);
     await page.until(`window.lastReply === 'hello from the server'`);
     await click('[tether-click=increment]');
     await page.until(`document.body.textContent.includes('Clicked 1 times')`);

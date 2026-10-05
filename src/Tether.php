@@ -121,7 +121,7 @@ final class Tether implements MiddlewareInterface
         if ($result instanceof ResponseInterface) {
             return $result;
         }
-        $html = ($shell ?? Live::shell(...))((new Circuit(request: $request))->mount($result->class, $result->props), Live::scripts($nonce), $result);
+        $html = ($shell ?? Live::shell(...))(Circuit::prerender($result->class, $result->props, $request), Live::scripts($nonce), $result);
         if (!\str_contains($html, 'data-tether')) {
             throw new \LogicException('The shell must place its $scripts argument in the document: the page is dead without it');
         }
@@ -153,7 +153,7 @@ final class Tether implements MiddlewareInterface
      */
     public static function page(string $class, array $props = [], string $title = '', string $head = ''): ResponseInterface
     {
-        $html = (new Circuit())->mount($class, $props);
+        $html = Circuit::prerender($class, $props);
 
         return Live::document($html, ['live' => '/_tether/live', 'c' => $class, 'p' => $props, 's' => self::sign($class, $props)], $title, $head, '/_tether');
     }

@@ -121,8 +121,10 @@ gives it back when the statement is done:
 ## State that outlives the tab
 
 Component properties live as long as the component: a reload, a lost connection or a deploy
-starts over from `mount()`. What must last goes to storage (the database, the session), and
-`mount()` reads it back.
+starts over from `mount()`, and what was typed into a field is replaced with what the server renders.
+What must last goes to storage (the database, the session), and `mount()` reads it back. A draft
+that should survive a reconnect: save it from a `debounce-500` `tether-input` handler into the
+session, and read it in `mount()`.
 
 ## Many users: publish and subscribe
 
@@ -178,7 +180,7 @@ final class Room extends Component
     {
         $items = '';
         foreach ($this->messages as $m) {
-            $items .= '<li><b>' . htmlspecialchars($m->user) . '</b> ' . htmlspecialchars($m->text) . '</li>';
+            $items .= '<li><b>' . $this->e($m->user) . '</b> ' . $this->e($m->text) . '</li>';
         }
 
         return "<section><ul>{$items}</ul><form tether-submit=\"send\"><input name=\"text\" autocomplete=\"off\"></form></section>";
