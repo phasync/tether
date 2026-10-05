@@ -32,6 +32,9 @@ final class Tab
     /** What failed the tab (everything unmounted, the connection would close), if it did. */
     public ?\Throwable $crashed = null;
 
+    /** Whether the server closed the tab for sending nothing for Limits::$clientTimeout. */
+    public bool $timedOut = false;
+
     /** @var list<array> the frames sent to the browser, as JSON-decoded as it gets them */
     public array $frames = [];
 
@@ -84,6 +87,7 @@ final class Tab
     public function call(string $method, array $args = [], string $id = 'c1', array $payload = []): void
     {
         $this->extent($id);
+        $this->circuit->heard();
         $this->circuit->event($id, $method, $args, payload: $payload);
         $this->circuit->idle();
     }
@@ -97,6 +101,7 @@ final class Tab
     {
         $this->extent($id);
         $reply = ++$this->replies;
+        $this->circuit->heard();
         $this->circuit->event($id, $method, $args, $reply, $payload, true);
         $this->circuit->idle();
         foreach ($this->frames as $frame) {
@@ -143,6 +148,13 @@ final class Tab
         $this->circuit->idle();
     }
 
+    /** Send the browser's heartbeat: the tab answers with a `pong` frame, and counts the browser as heard from. */
+    public function ping(): void
+    {
+        $this->circuit->ping();
+        $this->circuit->idle();
+    }
+
     /** Wait until the tab is idle: nothing running, nothing left to send. */
     public function idle(): void
     {
@@ -180,6 +192,7 @@ final class Tab
             request: $request,
             limits: $limits,
             abuse: static fn () => throw new \LogicException('The test sent more events than the Limits allow: give Tab a larger Limits'),
+            timeout: fn () => $this->timedOut = true,
         );
         $this->dom = $this->circuit->mount($page->class, $page->props);
         $this->circuit->delivered();

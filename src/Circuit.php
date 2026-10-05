@@ -93,6 +93,9 @@ final class Circuit
 
     private float $overrunLogged = 0.0;
 
+    /** When the browser last sent anything: the clientTimeout counts from here. */
+    private float $heardAt;
+
     /**
      * @param \Closure(array): void|null      $send   sends a frame to the browser; null when not live
      * @param float                           $maxFps the most frames a second
@@ -102,6 +105,7 @@ final class Circuit
      * @param ServerRequestInterface|null     $request the request the tab belongs to, for Component::request()
      * @param Limits                          $limits  what the browser may ask of the tab
      * @param \Closure(): void|null           $abuse   told when the browser sends more than the limits allow (the connection should close)
+     * @param \Closure(): void|null           $timeout told when the browser sent nothing for Limits::$clientTimeout (the connection should close)
      */
     public function __construct(
         private readonly ?\Closure $send = null,
@@ -111,9 +115,10 @@ final class Circuit
         private readonly ?ServerRequestInterface $request = null,
         private readonly Limits $limits = new Limits(),
         private readonly ?\Closure $abuse = null,
+        private readonly ?\Closure $timeout = null,
     ) {
         $this->tokens   = $limits->burst;
-        $this->refilled = \microtime(true);
+        $this->refilled = $this->heardAt = \microtime(true);
         $this->flushed  = new \stdClass();
         $this->remote   = new Remote($this, $send, $limits);
     }
@@ -136,6 +141,22 @@ final class Circuit
         $this->abuse?->__invoke();
 
         return false;
+    }
+
+    /** The browser sent something: a message of any kind. */
+    public function heard(): void
+    {
+        $this->heardAt = \microtime(true);
+    }
+
+    /**
+     * The browser's heartbeat: answered at once, and not an event, so it takes no token from the
+     * bucket.
+     */
+    public function ping(): void
+    {
+        $this->heard();
+        ($this->send)(['t' => 'pong']);
     }
 
     /** @internal see Component::isLive() */
@@ -170,7 +191,14 @@ final class Circuit
      */
     public function run(): void
     {
-        $next = 0.0;
+        $next  = 0.0;
+        $watch = \phasync::go(function () {
+            while (($left = $this->heardAt + $this->limits->clientTimeout - \microtime(true)) > 0) {
+                \phasync::sleep($left);
+            }
+            Swerve::log()->info('Tether: the tab sent nothing for {seconds} seconds, and is closed', ['seconds' => $this->limits->clientTimeout]);
+            $this->timeout?->__invoke();
+        });
         try {
             while (true) {
                 while (!$this->dirty && !$this->remote->rel && !$this->replies && !$this->failures && !$this->navigations && !$this->refused) {
@@ -188,6 +216,8 @@ final class Circuit
         } catch (\Throwable $e) {
             // A boundary's catch() that fails, a frame that can't be encoded or sent
             $this->fail(null, $e);
+        } finally {
+            $watch->isTerminated() || \phasync::cancel($watch);
         }
     }
 

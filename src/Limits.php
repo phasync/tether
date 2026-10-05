@@ -14,6 +14,10 @@ namespace Tether;
  * The server's calls into the browser are limited too: $calls outstanding at once, $handles
  * objects held, and each call waits $callTimeout seconds for its answer unless
  * Browser::within() says otherwise.
+ *
+ * A tab that has sent nothing for $clientTimeout seconds is dead (a half-open connection): the
+ * server closes it with 4408. The client sends a heartbeat when it is quiet for half of that
+ * (at most 25 s), and reconnects when it has heard nothing at all for twice that.
  */
 final readonly class Limits
 {
@@ -25,6 +29,7 @@ final readonly class Limits
      * @param int   $calls           calls into the browser outstanding in a tab, at most
      * @param int   $handles         browser objects a tab holds as JsObjects, at most
      * @param float $callTimeout     seconds a call into the browser waits for its answer
+     * @param float $clientTimeout   seconds of silence from the browser after which its connection is closed
      */
     public function __construct(
         public int $eventsPerSecond = 200,
@@ -34,9 +39,10 @@ final readonly class Limits
         public int $calls = 32,
         public int $handles = 4096,
         public float $callTimeout = 10.0,
+        public float $clientTimeout = 60.0,
     ) {
-        if ($eventsPerSecond < 1 || $burst < 1 || $running < 1 || $bytes < 1 || $calls < 1 || $handles < 1 || $callTimeout <= 0) {
-            throw new \InvalidArgumentException('Every Limits value must be at least 1 (callTimeout above 0)');
+        if ($eventsPerSecond < 1 || $burst < 1 || $running < 1 || $bytes < 1 || $calls < 1 || $handles < 1 || $callTimeout <= 0 || $clientTimeout <= 0) {
+            throw new \InvalidArgumentException('Every Limits value must be at least 1 (callTimeout and clientTimeout above 0)');
         }
     }
 }

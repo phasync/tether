@@ -4,6 +4,7 @@ use Tether\Component;
 use Tether\Event\KeyboardEventArgs;
 use Tether\Circuit;
 use Tether\Invokable;
+use Tether\Limits;
 use Tether\NoRender;
 use Tether\JsException;
 use Tether\Tether;
@@ -308,4 +309,28 @@ test('a child patched to new HTML and rendered back to the old one by its parent
         $tab->call('flip');
         expect($tab->html())->toContain('>A<');
     });
+});
+
+test('a heartbeat is answered with a pong, and takes nothing from the event bucket', function () {
+    Tab::mount(TabCounter::class, [], function (Tab $tab) {
+        for ($i = 0; $i < 10; ++$i) {
+            $tab->ping();
+        }
+        $tab->call('increment');
+        expect(array_column($tab->frames, 't'))->toBe(array_merge(array_fill(0, 10, 'pong'), ['frame']))
+            ->and($tab->timedOut)->toBeFalse();
+    }, limits: new Limits(eventsPerSecond: 1, burst: 3));
+});
+
+test('a tab that sent nothing for clientTimeout is closed; anything the browser sends starts the count again', function () {
+    Tab::mount(TabCounter::class, [], function (Tab $tab) {
+        $tab->advance(0.15);
+        $tab->ping();
+        $tab->advance(0.15);
+        $tab->call('increment');
+        $tab->advance(0.15);
+        expect($tab->timedOut)->toBeFalse();
+        $tab->advance(0.1);
+        expect($tab->timedOut)->toBeTrue();
+    }, limits: new Limits(clientTimeout: 0.2));
 });

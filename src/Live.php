@@ -133,20 +133,24 @@ final class Live
             request: $request,
             limits: $limits,
             abuse: static fn () => $ws->end(4429),
+            timeout: static fn () => $ws->end(4408),
         );
         try {
             if (null === ($html = $circuit->mount($page->class, $page->props))) {
                 return;
             }
-            $ws->send(\json_encode(['t' => 'mount', 'html' => $html, 'lim' => ['eps' => $limits->eventsPerSecond, 'burst' => $limits->burst, 'bytes' => $limits->bytes]], \JSON_THROW_ON_ERROR));
+            $ws->send(\json_encode(['t' => 'mount', 'html' => $html, 'lim' => ['eps' => $limits->eventsPerSecond, 'burst' => $limits->burst, 'bytes' => $limits->bytes, 'ping' => \min(25, $limits->clientTimeout / 2)]], \JSON_THROW_ON_ERROR));
             $circuit->delivered();
             $writer = \phasync::go($circuit->run(...));
             while (null !== ($message = $ws->receive())) {
+                $circuit->heard();
                 $message = \json_decode($message, true);
                 if (!\is_array($message)) {
                     continue;
                 }
-                if ('ret' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
+                if ('ping' === ($message['t'] ?? null)) {
+                    $circuit->ping();
+                } elseif ('ret' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
                     $circuit->returned($message['i'], $message['v'] ?? null, \is_array($message['e'] ?? null) ? $message['e'] : null);
                 } elseif ('navigate' === ($message['t'] ?? null) && \is_string($message['u'] ?? null)) {
                     if (!$circuit->admit()) {

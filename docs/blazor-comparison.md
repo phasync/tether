@@ -50,6 +50,7 @@ what.
 | `NavigationManager.NavigateTo` | `$this->navigate($url)`: a page change inside an [App](apps.md), a full load for any other URL (also from a `from()` page) |
 | `Router`, link interception | an [App](apps.md) with routes keeps the circuit across pages; on a `from()` page [`tether-boost`](running.md#navigation-without-a-reload) fetches and morphs the next page without a reload, but with no continuity: the new page opens its own connection and its state starts over |
 | Reconnect UI (`components-reconnect-*`) | `tether-offline` and `tether-crashed` on `<html>`, the `tetherconnection` event, `Tether.reconnect()` |
+| Keep-alive pings, `ClientTimeoutInterval` | a heartbeat both ways: the browser drops a silent connection and reconnects, the server closes a tab that sent nothing for `Limits::$clientTimeout` ([Errors](errors.md#without-a-boundary-the-tab-starts-over)) |
 | Hub message size limit | `Limits::$bytes`; more limits in `Tether\Limits` |
 | bUnit | `Tether\Testing\Tab` ([Testing](testing.md)) |
 

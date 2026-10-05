@@ -17,7 +17,8 @@
 //   changed since the last one; tether-keep="attr ..." lists attributes the server never overwrites.
 // - Connection: <html> has tether-live or tether-offline (and tether-crashed after a server error), the
 //   document gets tetherconnection events, Tether.reconnect() connects at once, and a refused call is
-//   a console.error and a tetherrefused event. An event is sent as {c, m, a: tether-args, v: the field's
+//   a console.error and a tetherrefused event. A connection quiet for lim.ping seconds sends a
+//   ping (answered by a pong), and one that heard nothing for twice that is dropped and reconnected. An event is sent as {c, m, a: tether-args, v: the field's
 //   value}; the server joins them into the handler's parameters.
 // - Hooks: Tether.hook('Name', {mounted() {}, updated() {}, destroyed() {}, ...methods}) gives
 //   every element with tether-hook="Name" an instance, while the tab is live: this.el is the
@@ -71,7 +72,7 @@
   let retry = 0; // timer: the next attempt to connect
   let attempt = 0; // connections that failed since the last live one
   let nextReply = 0;
-  let lim = { eps: 200, burst: 400, bytes: 524288 }; // the server's limits, from the mount frame
+  let lim = { eps: 200, burst: 400, bytes: 524288, ping: 25 }; // the server's limits, from the mount frame
 
   const debug = (...what) => {
     if (Tether.debug) {
@@ -100,6 +101,7 @@
   // The connection is over: what lived on it goes, as when the page unloads
   function release() {
     clearTimeout(settled);
+    clearTimeout(beat);
     live = false;
     rendered = new WeakMap();
     discardPaced();
@@ -120,14 +122,44 @@
     }
   }
 
+  // The heartbeat: a connection quiet for lim.ping seconds sends a ping (the server answers with a
+  // pong, and closes a tab it has heard nothing from for its clientTimeout); one that has
+  // received nothing for twice that is half-open, and is dropped without waiting for the kernel
+  let heardAt = 0;
+  let sentAt = 0;
+  let beat;
+  const sendFrame = (text) => {
+    sentAt = performance.now();
+    socket.send(text);
+  };
+
+  function heartbeat() {
+    const now = performance.now();
+    const quiet = lim.ping * 1000;
+    if (now - heardAt >= 2 * quiet) {
+      console.warn('Tether: the server went silent; reconnecting');
+      socket.onopen = socket.onmessage = socket.onclose = null;
+      socket.close();
+      lost(1006);
+      return;
+    }
+    if (now - sentAt >= quiet) {
+      sendFrame('{"t":"ping"}');
+    }
+    beat = setTimeout(heartbeat, quiet / 4);
+  }
+
   function connect() {
     retry = 0;
     socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${liveUrl}`);
     socket.onopen = () => {
-      socket.send(JSON.stringify(!mount ? {} : app ? { u: here() } : mount));
+      heardAt = sentAt = performance.now();
+      beat = setTimeout(heartbeat, lim.ping * 250);
+      sendFrame(JSON.stringify(!mount ? {} : app ? { u: here() } : mount));
       settled = setTimeout(() => { backoff = 250; }, 5000);
     };
     socket.onmessage = (message) => {
+      heardAt = performance.now();
       try {
         receive(JSON.parse(message.data));
       } catch (error) {
@@ -135,29 +167,34 @@
         socket.close(4000);
       }
     };
-    socket.onclose = (event) => {
-      release();
-      if (event.code === 1008 && mount) {
-        location.reload();
-        return;
-      }
-      const crashed = event.code === 1011;
-      if (crashed) {
-        console.warn('Tether: the server failed this tab; reconnecting');
-      }
-      if (event.code === 1008) {
-        state('offline', { retryMs: null });
-        return;
-      }
-      const retryMs = backoff * (0.5 + Math.random() / 2);
-      ++attempt;
-      state('offline', { crashed, retryMs: Math.round(retryMs) });
-      retry = setTimeout(connect, retryMs);
-      backoff = Math.min(backoff * 2, 30000);
-    };
+    socket.onclose = (event) => lost(event.code);
+  }
+
+  function lost(code) {
+    release();
+    if (code === 1008 && mount) {
+      location.reload();
+      return;
+    }
+    const crashed = code === 1011;
+    if (crashed) {
+      console.warn('Tether: the server failed this tab; reconnecting');
+    }
+    if (code === 1008) {
+      state('offline', { retryMs: null });
+      return;
+    }
+    const retryMs = backoff * (0.5 + Math.random() / 2);
+    ++attempt;
+    state('offline', { crashed, retryMs: Math.round(retryMs) });
+    retry = setTimeout(connect, retryMs);
+    backoff = Math.min(backoff * 2, 30000);
   }
 
   function receive(frame) {
+    if (frame.t === 'pong') {
+      return;
+    }
     if (frame.t === 'op') {
       perform(frame);
       return;
@@ -182,6 +219,8 @@
     }
     if (frame.t === 'mount') {
       lim = { ...lim, ...frame.lim };
+      clearTimeout(beat);
+      beat = setTimeout(heartbeat, lim.ping * 250);
       bucket = lim.burst * 0.9;
       refilled = performance.now();
     }
@@ -547,7 +586,7 @@
       taken.forEach((id) => unref(id, 1));
     }
     if (live && socket.readyState === WebSocket.OPEN) {
-      socket.send(text);
+      sendFrame(text);
     } else {
       taken.forEach((id) => unref(id, 1));
     }
@@ -570,7 +609,7 @@
       return Promise.reject(new Error('The call was not sent: too large, or too many'));
     }
     nextReply = r;
-    socket.send(text);
+    sendFrame(text);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         waiting.delete(r);
@@ -1166,7 +1205,7 @@
       busy.add(slot);
     }
     debug('send', msg.m, msg.e?.type);
-    socket.send(text);
+    sendFrame(text);
     return true;
   }
 
@@ -1298,7 +1337,7 @@
   // ---- An App's links ------------------------------------------------------------------------
   const navigate = (url, push) => {
     if (take()) {
-      socket.send(JSON.stringify({ t: 'navigate', u: url, p: push }));
+      sendFrame(JSON.stringify({ t: 'navigate', u: url, p: push }));
     }
   };
   // Below the App, same window, no modifier keys; not while offline; not a link with its own click binding

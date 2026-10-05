@@ -62,6 +62,13 @@ The browser waits longer after each connection (250 ms, doubling up to 30 s, wit
 randomness so that many tabs do not return together), and starts over only when a connection
 has stayed open for 5 s, so a page that fails right after every mount doesn't hammer the server.
 
+A connection that dies without a goodbye (a laptop lid, a NAT that forgot the connection) is
+found by a heartbeat, not by the kernel's timeouts: a connection quiet for 25 s sends a
+`{"t":"ping"}`, the server answers `pong`, and a browser that has received nothing for 50 s drops
+the socket itself and reconnects as above. The server closes a tab that has sent nothing for
+`Limits::$clientTimeout` seconds (60) with code 4408 (the browser pings at half of it, at most
+every 25 s). Heartbeats are not events: they take nothing from the event bucket.
+
 A `Tether::from()` page that the server refuses with code 1008 (its closure answered with
 something other than a page or a redirect, a 404 for example) stops reconnecting: the page stays
 as it was, with `tether-offline` set. A closure that throws is a failed connection like any

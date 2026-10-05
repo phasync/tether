@@ -98,5 +98,7 @@ input; its errors carry the JavaScript error's name, message and stack
   the connection (code 4429) or refuses the call. `Tether\Limits` changes them
   ([events](events-and-javascript.md#how-events-leave-the-browser)). A handler that does
   expensive work for every call should still limit itself.
+- A tab that sends nothing, not even the client's heartbeat, for 60 s is closed (code 4408;
+  `Limits::$clientTimeout`).
 - A tab has at most 32 calls into the browser outstanding, holds at most 4,096 of its objects, and
   a call waits 10 s for its answer (`Limits::$calls`, `$handles`, `$callTimeout`).

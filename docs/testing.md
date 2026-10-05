@@ -36,6 +36,8 @@ Tab::page(fn (Tether $t) => $t->mount(Counter::class, ['count' => 3], 'Counter')
 - `html()` is what the browser shows: the mount HTML with every frame's patches applied. A
   component that changes state without `requestRender()` has not changed it. `html('c2')` is one
   component's element.
+- `ping()` sends the browser's heartbeat: the tab answers with a `pong` frame. `$timedOut` is
+  true once the tab sent nothing for `Limits::$clientTimeout` (give `limits:` a small one).
 - `advance($seconds)` lets `run()` loops and timers work, then waits for idle.
 - `$frames` are the frames sent, as the browser receives them.
 - `$crashed` is what failed the tab (a handler or `run()` with no error boundary above it); after
