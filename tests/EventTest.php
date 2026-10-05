@@ -40,6 +40,26 @@ final class EventSink extends Component
         self::$got[] = ['plain', $id, $options];
     }
 
+    public function key(KeyboardEventArgs $e): void
+    {
+        self::$got[] = ['key', $e];
+    }
+
+    public function mouse(MouseEventArgs $e): void
+    {
+        self::$got[] = ['mouse', $e];
+    }
+
+    public function pointer(PointerEventArgs $e): void
+    {
+        self::$got[] = ['pointer', $e];
+    }
+
+    public function wheel(WheelEventArgs $e): void
+    {
+        self::$got[] = ['wheel', $e];
+    }
+
     public function none(): void
     {
         self::$got[] = ['none'];
@@ -139,6 +159,24 @@ test('the payload goes only into a last parameter typed EventArgs, after the arg
         ->and($raw[1]::class)->toBe(EventArgs::class)
         ->and($raw[1]->data)->toBe(['type' => 'visibilitychange', 'hidden' => true]);
 });
+
+test('a handler taking only an EventArgs parameter is called, whatever the field says', function (string $method, string $class, array $payload) {
+    $r = live(EventSink::class, [], function (Circuit $c) use ($method, $payload) {
+        $c->event('c1', $method, [], null, $payload);
+        $c->event('c1', $method, [], 1, $payload, false, ['text']);
+    });
+    expect($r['crashed'])->toBeNull()
+        ->and(replies($r['frames'])[1])->not->toHaveKey('e')
+        ->and(EventSink::$got)->toHaveCount(2)
+        ->and(EventSink::$got[0][1])->toBeInstanceOf($class)
+        ->and(EventSink::$got[1][1])->toBeInstanceOf($class);
+})->with([
+    'keyboard' => ['key', KeyboardEventArgs::class, ['type' => 'keydown', 'key' => 'a']],
+    'mouse'    => ['mouse', MouseEventArgs::class, ['type' => 'click', 'clientX' => 1, 'clientY' => 2]],
+    'pointer'  => ['pointer', PointerEventArgs::class, ['type' => 'pointermove', 'pointerId' => 1, 'pointerType' => 'touch']],
+    'wheel'    => ['wheel', WheelEventArgs::class, ['type' => 'wheel', 'deltaY' => 3]],
+    'any'      => ['raw', EventArgs::class, ['type' => 'visibilitychange']],
+]);
 
 test('optional parameters before the event keep their defaults', function () {
     live(EventSink::class, [], function (Circuit $c) {
