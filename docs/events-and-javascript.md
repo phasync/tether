@@ -130,7 +130,7 @@ alone. A closed connection drops everything waiting.
 it, so an honest page never hits it); a tab that exceeds it is closed with code 4429. At most 64
 handlers run at once per tab: more are refused (the reply, or a `console.error` for events
 without one, says so), and a message over 512 KiB is not sent. `new Tether\Limits(eventsPerSecond: 500, burst: 1000, running: 128, bytes: 1048576)`
-changes them: the last parameter of `Tether::from()`, and of the `Tether` middleware and `App`
+changes them: the `limits` parameter of `Tether::from()`, and of the `Tether` middleware and `App`
 constructors. Tether.debug (`?tether-debug`) tells in the console why an event was dropped or
 held back.
 

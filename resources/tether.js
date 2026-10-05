@@ -43,7 +43,8 @@
 //   the URL. The delay between attempts grows, with jitter, up to 30 s, and starts over once a
 //   connection has lasted 5 s. A connection the server refuses (close code 1008) reloads a page
 //   of the middleware or an App (from before a deploy), and leaves a Tether::from() page static,
-//   with tether-offline set.
+//   with tether-offline set. A page served by other code than the server now runs (its version,
+//   sent on open, differs: close code 4001) reloads.
 // - Boost (a Tether::from() page): a click on a link below tether-boost fetches the page and morphs its
 //   body into this one, then connects as a new tab: no continuity. Anything else is a full load.
 // - A Tether::from() page has no tether-mount element: its live connection is the URL it was
@@ -55,6 +56,9 @@
   const tag = document.getElementById('tether-mount');
   const mount = tag && JSON.parse(tag.textContent); // null: a Tether::from() page
   const app = !!mount && 'base' in mount; // an App's page: navigation goes over the connection
+  // What served this page, sent when the connection opens: the server closes a tab served by
+  // other code with 4001, and the page reloads
+  const version = document.querySelector('meta[name=tether-version]').content;
   let liveUrl = mount ? mount.live : location.pathname + location.search; // a boosted page sets it again
   const here = () => location.pathname + location.search;
   const hooks = {};
@@ -155,7 +159,7 @@
     socket.onopen = () => {
       heardAt = sentAt = performance.now();
       beat = setTimeout(heartbeat, lim.ping * 250);
-      sendFrame(JSON.stringify(!mount ? {} : app ? { u: here() } : mount));
+      sendFrame(JSON.stringify(!mount ? { v: version } : app ? { u: here(), v: version } : { ...mount, v: version }));
       settled = setTimeout(() => { backoff = 250; }, 5000);
     };
     socket.onmessage = (message) => {
@@ -172,7 +176,7 @@
 
   function lost(code) {
     release();
-    if (code === 1008 && mount) {
+    if ((code === 1008 && mount) || code === 4001) {
       location.reload();
       return;
     }

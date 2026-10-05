@@ -7,6 +7,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Tether\Circuit;
 use Tether\Component;
+use Tether\Live;
 use Tether\Page;
 use Tether\Tether;
 
@@ -35,8 +36,9 @@ final class Greeting extends Component
 }
 
 /** A request for $target; a WebSocket upgrade with $frames (the client's messages) as its body when $upgrade. */
-function from_request(string $target, array $headers = [], string $method = 'GET', bool $upgrade = false, array $frames = ['{}']): ServerRequestInterface
+function from_request(string $target, array $headers = [], string $method = 'GET', bool $upgrade = false, ?array $frames = null): ServerRequestInterface
 {
+    $frames ??= ['{"v":"' . Live::version() . '"}'];
     $headers += ['Host' => 'example.test'];
     if ($upgrade) {
         $headers += ['Upgrade' => 'websocket', 'Connection' => 'Upgrade', 'Sec-WebSocket-Version' => '13', 'Sec-WebSocket-Key' => 'dGhlIHNhbXBsZSBub25jZQ=='];
@@ -142,7 +144,7 @@ test('a shell gets the root, the scripts and the page, and its string is the res
         return "<html><head>$scripts</head><body><main>$root</main></body></html>";
     }]);
     expect($args[0])->toBe('<p tether-id="c1">Ada</p>')
-        ->and($args[1])->toStartWith('<script type="module" data-tether')
+        ->and($args[1])->toContain('<script type="module" data-tether')
         ->and($args[2]->title)->toBe('Shelled')
         ->and((string) $response->getBody())->toBe("<html><head>{$args[1]}</head><body><main>{$args[0]}</main></body></html>");
 });
@@ -195,6 +197,20 @@ test('the live tab mounts what the closure returned, with its objects and the up
         ->and($messages[0]['html'])->toBe('<p tether-id="c1">Hi Grace</p>')
         ->and($close)->toBe(1001)
         ->and($GLOBALS['from_mounted'])->toBe(['/n/9']);
+});
+
+test('a page tells its version, and a live connection that names another is closed with 4001', function () {
+    $page = fn (Tether $t) => $t->mount(Greeting::class);
+    [$response] = from_run(from_request('/'), $page);
+    $own = Live::version();
+    expect((string) $response->getBody())->toContain('<meta name="tether-version" content="' . $own . '">');
+    [$response] = from_run(from_request('/'), $page, ['version' => 'abc123']);
+    expect((string) $response->getBody())->toContain('content="' . Live::version('abc123') . '"')->not->toContain($own);
+    foreach ([['{"v":"' . $own . '"}', 'abc123', 4001], ['{"v":"' . Live::version('abc123') . '"}', 'abc123', 1001], ['{}', '', 4001], ['{"v":"' . $own . '"}', '', 1001]] as [$first, $version, $expected]) {
+        [$response] = from_run(from_request('/', upgrade: true, frames: [$first]), $page, ['version' => $version]);
+        [$messages, $close] = phasync::run(fn () => from_frames($response));
+        expect($close)->toBe($expected)->and(count($messages) > 0)->toBe(1001 === $expected);
+    }
 });
 
 test('an upgrade the closure answers with a redirect sends the page there; another response closes with 1008', function () {

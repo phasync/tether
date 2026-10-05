@@ -41,6 +41,13 @@ await page.init(`(() => {
       window.sockets.push(this);
     }
     send(text) {
+      // window.stale: the first page load names another version, as a page served before a deploy does
+      if (window.stale && !sessionStorage.stalePlayed) {
+        sessionStorage.stalePlayed = '1';
+        const first = JSON.parse(text);
+        first.v = 'old';
+        text = JSON.stringify(first);
+      }
       window.sockets.log.push('>' + (JSON.parse(text).t ?? 'event'));
       super.send(text);
     }
@@ -59,6 +66,15 @@ try {
     await page.eval(`window.sockets[0].swallow = true`);
     await page.until(`window.sockets.length === 2 && document.documentElement.hasAttribute('tether-live')`, 5000);
     if (await page.eval(`window.sockets[0].readyState`) === 1) throw new Error('the dead socket is still open');
+    await page.eval(`document.getElementById('inc').click()`);
+    await page.until(`document.getElementById('count').textContent === '1'`);
+  });
+
+  await check('a page served by another version reloads, and is live', async () => {
+    await page.eval(`sessionStorage.clear()`);
+    await page.init(`window.stale = true`);
+    await page.goto(new URL('/', url).href);
+    await page.until(`window.sockets.length === 1 && document.documentElement.hasAttribute('tether-live')`, 10000);
     await page.eval(`document.getElementById('inc').click()`);
     await page.until(`document.getElementById('count').textContent === '1'`);
   });

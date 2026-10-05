@@ -21,6 +21,22 @@ final class Live
         'idiomorph.js' => 'idiomorph.min.js',
     ];
 
+    /** Raised when the frames or messages change in a way the client file does not show. */
+    private const PROTOCOL = 1;
+
+    /**
+     * What a page tells the live connection about the code that served it: a hash of the client
+     * and the protocol, and $app, the application's own (a deploy id). A tab whose page was served
+     * by other code is closed with 4001 and reloads.
+     */
+    public static function version(string $app = ''): string
+    {
+        static $own = null;
+        $own ??= \sha1(self::PROTOCOL . \file_get_contents(\dirname(__DIR__) . '/resources/tether.js'));
+
+        return \substr(\sha1("$own\0$app"), 0, 12);
+    }
+
     /** The browser client's file $name, or null when there is none. */
     public static function asset(string $name): ?ResponseInterface
     {
@@ -38,7 +54,7 @@ final class Live
      * @param array<string, mixed> $mount  for the client: the live endpoint, and what to mount
      * @param string               $assets the URL path the client's files are served under
      */
-    public static function document(string $html, array $mount, string $title, string $head, string $assets): ResponseInterface
+    public static function document(string $html, array $mount, string $title, string $head, string $assets, string $version): ResponseInterface
     {
         $title = \htmlspecialchars($title);
         $mount = \json_encode($mount, \JSON_THROW_ON_ERROR | \JSON_HEX_TAG | \JSON_HEX_AMP);
@@ -50,6 +66,7 @@ final class Live
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>{$title}</title>
+            <meta name="tether-version" content="{$version}">
             <script src="{$assets}/idiomorph.js" defer></script>
             <script src="{$assets}/tether.js" defer></script>
             {$head}
@@ -66,13 +83,13 @@ final class Live
      * The client for a Tether::from() page: one inline module script, idiomorph then tether.js
      * (modules defer: it is safe in the head, and runs before the application's defer scripts).
      */
-    public static function scripts(string $nonce): string
+    public static function scripts(string $nonce, string $version): string
     {
         static $client = null;
         $client ??= \file_get_contents(\dirname(__DIR__) . '/resources/idiomorph.min.js') . "\n" . \file_get_contents(\dirname(__DIR__) . '/resources/tether.js');
         $nonce = '' === $nonce ? '' : ' nonce="' . \htmlspecialchars($nonce) . '"';
 
-        return "<script type=\"module\" data-tether{$nonce}>\n{$client}\n</script>";
+        return "<meta name=\"tether-version\" content=\"{$version}\">\n<script type=\"module\" data-tether{$nonce}>\n{$client}\n</script>";
     }
 
     /** The default document of a Tether::from() page. */

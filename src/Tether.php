@@ -77,13 +77,15 @@ final class Tether implements MiddlewareInterface
      * needs one on inline scripts. $origins: other origins whose pages may open the live
      * connection, as for the middleware; the Origin must be this host otherwise. $limits is
      * what a tab may ask of the server: events a second, handlers running, message size.
+     * $version is the application's deploy id (a git sha): a page served under another one
+     * reloads when its connection opens, as one served by another version of Tether does.
      *
      * @param \Closure(Tether): (Page|ResponseInterface)                  $page
      * @param \Closure(string, string, Page): string|null                 $shell
      * @param list<string>                                                $origins
      * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter
      */
-    public static function from(ServerRequestInterface $request, \Closure $page, ?\Closure $shell = null, array $origins = [], ?\Closure $enter = null, string $nonce = '', Limits $limits = new Limits()): ResponseInterface
+    public static function from(ServerRequestInterface $request, \Closure $page, ?\Closure $shell = null, array $origins = [], ?\Closure $enter = null, string $nonce = '', Limits $limits = new Limits(), string $version = ''): ResponseInterface
     {
         $method = $request->getMethod();
         if ('GET' !== $method && 'HEAD' !== $method) {
@@ -95,9 +97,14 @@ final class Tether implements MiddlewareInterface
             }
             $result = self::answer($page(new self(live: true)));
             if ($result instanceof Page) {
-                return WebSocket::from($request, static function (WebSocket $ws) use ($request, $result, $enter, $limits) {
+                return WebSocket::from($request, static function (WebSocket $ws) use ($request, $result, $enter, $limits, $version) {
                     // The browser's first message, sent on open, is the barrier: the 101 is out and the handler returned
-                    if (null === $ws->receive()) {
+                    if (null === ($first = $ws->receive())) {
+                        return;
+                    }
+                    if ((\json_decode($first, true)['v'] ?? null) !== Live::version($version)) {
+                        $ws->end(4001);
+
                         return;
                     }
                     $tab = static fn () => Live::tab($ws, $result, null, $request, $limits);
@@ -119,7 +126,7 @@ final class Tether implements MiddlewareInterface
         if ($result instanceof ResponseInterface) {
             return $result;
         }
-        $html = ($shell ?? Live::shell(...))(Circuit::prerender($result->class, $result->props, $request), Live::scripts($nonce), $result);
+        $html = ($shell ?? Live::shell(...))(Circuit::prerender($result->class, $result->props, $request), Live::scripts($nonce, Live::version($version)), $result);
         if (!\str_contains($html, 'data-tether')) {
             throw new \LogicException('The shell must place its $scripts argument in the document: the page is dead without it');
         }
@@ -155,7 +162,7 @@ final class Tether implements MiddlewareInterface
     {
         $html = Circuit::prerender($class, $props);
 
-        return Live::document($html, ['live' => '/_tether/live', 'c' => $class, 'p' => $props, 's' => self::sign($class, $props)], $title, $head, '/_tether');
+        return Live::document($html, ['live' => '/_tether/live', 'c' => $class, 'p' => $props, 's' => self::sign($class, $props)], $title, $head, '/_tether', Live::version());
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -182,6 +189,11 @@ final class Tether implements MiddlewareInterface
         $mount = \json_decode((string) $ws->receive(), true);
         if (!\is_array($mount) || !\is_string($mount['c'] ?? null) || !\is_array($mount['p'] ?? null) || !\hash_equals(self::sign($mount['c'], $mount['p']), (string) ($mount['s'] ?? ''))) {
             $ws->end(1008);
+
+            return;
+        }
+        if (($mount['v'] ?? null) !== Live::version()) {
+            $ws->end(4001);
 
             return;
         }

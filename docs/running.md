@@ -152,6 +152,12 @@ Options, after the closure:
 - `nonce`: for a Content-Security-Policy that needs one on the inline script.
 - `origins`: other origins whose pages may open the live connection (the Origin must be the
   host otherwise); `enter`: see below.
+- `version`: your deploy id (a git sha). A page names the version that served it when its
+  connection opens, and a server running another one closes it (code 4001) and the page reloads.
+  Without it the version is a hash of Tether's client, so a page served before
+  an upgrade of Tether reloads; the `App` constructor takes the same `version`. During a rolling
+  deploy two versions answer one address, and a reload may land on the other one and reload again
+  until the deploy is done.
 
 ## With mini
 

@@ -51,8 +51,9 @@ abstract class App implements RequestHandlerInterface
      * @param list<string>                                                 $origins other origins whose pages may open live connections
      * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter   runs a tab as the work of its request
      * @param Limits                                                       $limits  what a tab may ask of the server (see Limits)
+     * @param string                                                       $version the application's deploy id: a page served under another one reloads when it connects
      */
-    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null, private readonly Limits $limits = new Limits())
+    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null, private readonly Limits $limits = new Limits(), private readonly string $version = '')
     {
         foreach ((new \ReflectionObject($this))->getMethods() as $method) {
             foreach ($method->getAttributes(Route::class) as $attribute) {
@@ -84,7 +85,7 @@ abstract class App implements RequestHandlerInterface
             return $result;
         }
 
-        return Live::document(Circuit::prerender($result->class, $result->props, $request), ['live' => "$base/.tether/live", 'base' => $base], $result->title, $this->head(), "$base/.tether");
+        return Live::document(Circuit::prerender($result->class, $result->props, $request), ['live' => "$base/.tether/live", 'base' => $base], $result->title, $this->head(), "$base/.tether", Live::version($this->version));
     }
 
     /** HTML for the head of every page: the application's styles, and its scripts (defer). */
@@ -135,6 +136,11 @@ abstract class App implements RequestHandlerInterface
         $mount = \json_decode((string) $ws->receive(), true);
         if (!\is_string($mount['u'] ?? null)) {
             $ws->end(1008);
+
+            return;
+        }
+        if (($mount['v'] ?? null) !== Live::version($this->version)) {
+            $ws->end(4001);
 
             return;
         }

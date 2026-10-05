@@ -320,14 +320,14 @@ try {
     const r = await page.eval(`new Promise((resolve) => {
       const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + JSON.parse(document.getElementById('tether-mount').textContent).live);
       let lim = null;
-      ws.onopen = () => ws.send(document.getElementById('tether-mount').textContent);
+      ws.onopen = () => ws.send(JSON.stringify({ ...JSON.parse(document.getElementById('tether-mount').textContent), v: document.querySelector('meta[name=tether-version]').content }));
       ws.onmessage = (m) => {
         lim = JSON.parse(m.data).lim;
         for (let i = 0; i < 600; i++) ws.send('{"c":"x","m":"ping","a":[]}');
       };
       ws.onclose = (e) => resolve({ lim, code: e.code });
     })`);
-    expect('limits and close code', [r.lim, r.code], [{ eps: 200, burst: 400, bytes: 524288 }, 4429]);
+    expect('limits and close code', [r.lim, r.code], [{ eps: 200, burst: 400, bytes: 524288, ping: 25 }, 4429]);
   });
 
   if (page.logs.length) results.push('browser console: ' + page.logs.join(' | '));

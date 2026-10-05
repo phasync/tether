@@ -69,6 +69,10 @@ the socket itself and reconnects as above. The server closes a tab that has sent
 `Limits::$clientTimeout` seconds (60) with code 4408 (the browser pings at half of it, at most
 every 25 s). Heartbeats are not events: they take nothing from the event bucket.
 
+A page served by other code than the one that answers its connection (a deploy between the page
+and the connection, an upgrade of Tether) is closed with code 4001 and reloads
+([`version`](running.md#a-live-page-tetherfrom)).
+
 A `Tether::from()` page that the server refuses with code 1008 (its closure answered with
 something other than a page or a redirect, a 404 for example) stops reconnecting: the page stays
 as it was, with `tether-offline` set. A closure that throws is a failed connection like any
