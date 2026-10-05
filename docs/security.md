@@ -63,7 +63,7 @@ for the same URL and cookies: props never go to the browser, so there is nothing
 nothing the browser sends is trusted. The tab sees the request as it was when it connected:
 `request()` is a snapshot, and its body is the connection itself, so never read it.
 
-The older `Tether::page()` gives the root component its props differently. They go to the
+The deprecated `Tether::page()` gives the root component its props differently. They go to the
 browser in the page and come back when the tab connects, **signed** (HMAC-SHA256 with
 `TETHER_SECRET`, at least 32 bytes: a shorter one is an error), so they can't be changed; they can be **read**, and replayed by the same
 visitor. Don't put secrets in them; put ids in them and look things up, with permission checks,

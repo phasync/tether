@@ -214,7 +214,7 @@ request; only the ambient state is missing.
 
 ## Pages with navigation, and the middleware
 
-Two older ways, for what `from()` does not do.
+Two older ways. The middleware is deprecated and goes at 1.0; an App stays until `from()` pages can navigate over the open connection.
 
 - **An App** ([Apps and navigation](apps.md)): a class with routes to live pages, and
   navigation between them over the open connection, so the layout, a call or a half-typed
@@ -222,7 +222,7 @@ Two older ways, for what `from()` does not do.
   everything below it; with mini, `_routes/__DEFAULT__.php` returns
   `new App\Chat(enter: mini\Dispatcher\RequestDispatcher::within(...))` (or
   `_routes/chat/__DEFAULT__.php` for an App at `/chat/`).
-- **The middleware**: `Tether::page(Root::class, $props, $title, $head)` as a route's
+- **The middleware** (deprecated): `Tether::page(Root::class, $props, $title, $head)` as a route's
   response, with Tether's middleware serving the client's files and the live connection at
   `/_tether/`. The props travel through the browser, signed.
 

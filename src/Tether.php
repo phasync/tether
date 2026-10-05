@@ -21,9 +21,8 @@ use Swerve\Http\WebSocket;
  * leave the server: they may be any PHP values. A live tab starts from what the closure returns
  * on its connection, so its state is lost when the connection is, and starts over on reconnect.
  *
- * The older way, for pages that need the client's files at fixed URLs or live pages with
- * navigation between them (see App), is Tether::page() as a route's response, and this class as
- * middleware:
+ * The older way, deprecated and removed at 1.0 (App stays until from() pages can navigate
+ * in-circuit), is Tether::page() as a route's response, and this class as middleware:
  *
  * - page(): a page whose root is a component, as a response: its HTML rendered once, and the
  *   browser client, which then connects and mounts it live.
@@ -145,6 +144,8 @@ final class Tether implements MiddlewareInterface
     }
 
     /**
+     * @deprecated use Tether::from(); page() and the middleware are removed at 1.0
+     *
      * @param class-string<Component> $class
      * @param array<string, mixed>    $props  JSON-encodable
      * @param string                  $title  text
