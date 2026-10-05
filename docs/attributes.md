@@ -13,7 +13,7 @@ modifier or a contradiction (`passive` with `prevent`) is a `console.error` in t
 | `tether-args="[1, \"x\"]"` | an element with a binding | JSON array passed to the handler before the field's value and the event | [Events](events-and-javascript.md#events) |
 | `tether-args-<event>` | the same | like `tether-args`, for that event only; wins over it | |
 | `tether-event="shiftKey target.dataset.id"` | an element with a binding | more event data in `EventArgs::$data`: dotted paths, at most 32 | [Events](events-and-javascript.md#events) |
-| `$this->bind('prop')` | a field | writes `value` or `checked` and the `tether-input`/`tether-change` that sets a `#[Bind]` property | [Components](components.md#forms-bind) |
+| `$this->bind('prop')` | a field | writes `value` or `checked` and the `tether-input`/`tether-change` (with its own `tether-args-input`/`-change`) that sets a `#[Bind]` property; other bindings on the field are unaffected | [Components](components.md#forms-bind) |
 | `tether-hook="Name"` | any element | the JavaScript object registered with `Tether.hook('Name', ...)` lives as long as the element | [Hooks](events-and-javascript.md#hooks-the-browser-side-of-a-component) |
 | `tether-ref="name"` | any element | a name the server finds the element by: `$this->browser()->ref('name')` | [JavaScript interop](javascript-interop.md) |
 | `tether-ignore` | any element | a render never touches the element, its attributes or its content | [tether-ignore](events-and-javascript.md#tether-ignore-elements-the-browser-owns) |

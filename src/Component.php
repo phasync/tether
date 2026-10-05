@@ -176,6 +176,8 @@ abstract class Component
     /**
      * The attributes of a field that sets the public #[Bind] property $property as the user
      * types: its current value (`checked` for a bool), and the event that sends the new one.
+     * The property is passed with `tether-args-input` (`-change`), so the field's other bindings
+     * and their own `tether-args` are unaffected.
      * With $option, a radio button: it is checked when the property is $option.
      *
      * ```php
@@ -202,15 +204,15 @@ abstract class Component
         }
         $value = $this->$property;
         $value = $value instanceof \BackedEnum ? $value->value : $value;
-        $args  = ' tether-args="' . $this->e(\json_encode([$property], \JSON_THROW_ON_ERROR)) . '"';
+        $args  = $this->e(\json_encode([$property], \JSON_THROW_ON_ERROR));
         if (null !== $option) {
-            return 'value="' . $this->e($option) . '"' . ((string) $value === $option ? ' checked' : '') . ' tether-change="bound"' . $args;
+            return 'value="' . $this->e($option) . '"' . ((string) $value === $option ? ' checked' : '') . " tether-change=\"bound\" tether-args-change=\"{$args}\"";
         }
         if (\is_bool($value)) {
-            return ($value ? 'checked ' : '') . 'tether-change="bound"' . $args;
+            return ($value ? 'checked ' : '') . "tether-change=\"bound\" tether-args-change=\"{$args}\"";
         }
 
-        return 'value="' . $this->e(\is_array($value) ? '' : $value) . '" tether-input="bound"' . $args;
+        return 'value="' . $this->e(\is_array($value) ? '' : $value) . "\" tether-input=\"bound\" tether-args-input=\"{$args}\"";
     }
 
     /**

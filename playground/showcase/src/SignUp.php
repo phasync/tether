@@ -77,7 +77,7 @@ final class SignUp extends Section
         $name   = $this->field('name', 'Name', "<input name=\"name\" autocomplete=\"off\" {$this->bind('name')}>");
         $email  = $this->field('email', 'Email', "<input name=\"email\" type=\"email\" autocomplete=\"off\" {$this->bind('email')}>");
         $tags   = \implode('', \array_map(fn (string $t) => '<span class="tag">' . $this->e($t) . '</span>', $this->tags));
-        $tag    = $this->field('tag', 'Tags: Enter adds one', "<input name=\"tag\" autocomplete=\"off\" {$this->bind('tag')} tether-keydown.key-enter=\"addTag\" tether-args-keydown=\"[]\"><span class=\"tags\" id=\"tags\">{$tags}</span>");
+        $tag    = $this->field('tag', 'Tags: Enter adds one', "<input name=\"tag\" autocomplete=\"off\" {$this->bind('tag')} tether-keydown.key-enter=\"addTag\"><span class=\"tags\" id=\"tags\">{$tags}</span>");
         $plans  = \implode('', \array_map(fn (string $p) => "<option" . ($this->plan === $p ? ' selected' : '') . ">{$p}</option>", ['free', 'pro', 'team']));
         $plan   = $this->field('plan', 'Plan', "<select name=\"plan\" {$this->bind('plan')}>{$plans}</select>");
         $terms  = $this->field('terms', '', "<span><input type=\"checkbox\" name=\"terms\" {$this->bind('terms')}> I accept the terms</span>");

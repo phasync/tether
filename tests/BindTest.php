@@ -79,9 +79,9 @@ function after(string $property, mixed $value): string
 test('bind() writes the current value, and the event and arguments that set the property', function () {
     $html = Tab::mount(BindForm::class, ['name' => 'Ada "A" <b>', 'age' => 36, 'subscribed' => true, 'plan' => Plan::Pro], fn (Tab $tab) => $tab->html());
     expect($html)
-        ->toContain('<input value="Ada &quot;A&quot; &lt;b&gt;" tether-input="bound" tether-args="[&quot;name&quot;]">')
-        ->toContain('<input value="36" tether-input="bound" tether-args="[&quot;age&quot;]">')
-        ->toContain('<input type="checkbox" checked tether-change="bound" tether-args="[&quot;subscribed&quot;]">')
+        ->toContain('<input value="Ada &quot;A&quot; &lt;b&gt;" tether-input="bound" tether-args-input="[&quot;name&quot;]">')
+        ->toContain('<input value="36" tether-input="bound" tether-args-input="[&quot;age&quot;]">')
+        ->toContain('<input type="checkbox" checked tether-change="bound" tether-args-change="[&quot;subscribed&quot;]">')
         ->toContain('<input type="radio" value="free" tether-change="bound"')
         ->toContain('<input type="radio" value="pro" checked tether-change="bound"');
 });
