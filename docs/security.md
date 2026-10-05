@@ -13,8 +13,10 @@ for it. Treat each like a POST route:
 - Validate arguments: types are checked, values are not (an `int $id` can be any id).
 - A handler that throws is logged in full; the browser is only told "The handler failed", so
   driver and database messages stay on the server.
+- What a handler returns reaches the browser only when it is marked `#[Tether\Invokable]`
+  (`Tether.invoke()`); that is the list of handlers whose results you have decided are public.
 - Keep everything else `private` or `protected`. Methods of `Component` itself (`render`,
-  `mount`, `run`, `js`, ...) and an error boundary's `catch()` are never callable.
+  `mount`, `run`, `browser`, ...) and an error boundary's `catch()` are never callable.
 
 ## Escaping
 
@@ -69,6 +71,15 @@ closure runs; list others with `Tether::from($request, $page, origins: ['https:/
 `Host` on, or list the public origin. Non-browser clients send no `Origin` and are
 let through; they have no cookies of your visitors.
 
+## Calling the browser
+
+`$this->browser()` runs only what the server sends: function paths, code for `executeString()`
+and module URLs are yours, never taken from input; arguments go in as data, and
+`executeString()` binds them as parameters. What the browser answers is data to check, like any
+input; its errors carry the JavaScript error's name, message and stack
+(`JsException`): don't show them to other users. The page registers nothing to expose: the server can reach `window` and `document` of the tabs it serves, so the server is the trust boundary
+([JavaScript interop](javascript-interop.md#rules)).
+
 ## Limits
 
 - A message from the browser is at most 1 MiB; larger closes the connection.
@@ -78,3 +89,5 @@ let through; they have no cookies of your visitors.
   the connection (code 4429) or refuses the call. `Tether\Limits` changes them
   ([events](events-and-javascript.md#how-events-leave-the-browser)). A handler that does
   expensive work for every call should still limit itself.
+- A tab has at most 32 calls into the browser outstanding, holds at most 4,096 of its objects, and
+  a call waits 10 s for its answer (`Limits::$calls`, `$handles`, `$callTimeout`).

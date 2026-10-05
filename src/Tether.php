@@ -173,7 +173,7 @@ final class Tether implements MiddlewareInterface
 
     /**
      * A tab's live connection: the first message says what to mount (signed), the rest are
-     * events and the results of js() calls.
+     * events and the browser's answers to calls into it.
      */
     private function live(WebSocket $ws, ServerRequestInterface $request): void
     {

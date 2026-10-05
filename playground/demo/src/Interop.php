@@ -3,10 +3,11 @@
 namespace Demo;
 
 use Tether\Component;
+use Tether\Invokable;
 use Tether\JsException;
 
 /**
- * Talks with its hook in the browser (html/demo.js): the hook pushes hello(), the server
+ * Talks with its hook in the browser (html/demo.js): the hook invokes hello(), the server
  * calls the hook's elapsed(). The stopwatch is the browser's: tether-ignore keeps renders off it.
  */
 final class Interop extends Component
@@ -19,6 +20,7 @@ final class Interop extends Component
 
     private int $renders = 0;
 
+    #[Invokable]
     public function hello(string $userAgent): string
     {
         $this->greeting = 'The server got your hello (' . (str_contains($userAgent, 'Chrome') ? 'Chrome' : 'a browser') . ')';
@@ -28,13 +30,13 @@ final class Interop extends Component
 
     public function measure(): void
     {
-        $this->elapsed = $this->js('Stopwatch.elapsed');
+        $this->elapsed = $this->browser()->hook('Stopwatch')->elapsed();
     }
 
     public function badResult(): void
     {
         try {
-            $this->js('Stopwatch.circular');
+            $this->browser()->hook('Stopwatch')->circular();
         } catch (JsException $e) {
             $this->jsError = $e->getMessage();
         }

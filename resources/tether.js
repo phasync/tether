@@ -8,17 +8,26 @@
 //   data), PACE (send / latest / throttle / debounce / serial / drop) and SEND. The family table
 //   below is the only place where event types differ. docs/events-and-javascript.md has the
 //   attribute and modifier table.
-// - Frames: replies (they free the paced events), patches, then calls, then promises. Each patch
-//   is a component's new HTML, morphed into its element. The inside of a child component is left
+// - Frames: replies (they free the paced events), patches, then what the browser may let go of
+//   (rel). Each patch is a component's new HTML, morphed into its element. The inside of a child component is left
 //   alone unless the child was rendered too (it is in the patch's fresh list): a parent's update
 //   never disturbs a child's DOM, focus or input. An element with tether-ignore is never
 //   touched once on the page.
 // - Hooks: Tether.hook('Name', {mounted() {}, updated() {}, destroyed() {}, ...methods}) gives
 //   every element with tether-hook="Name" an instance, while the tab is live: this.el is the
-//   element, this.push(method, ...args) calls a handler of its component and resolves to what
-//   it returned. The server calls methods of it with js('Name.method', ...).
-// - Calls: the server's js() runs a hook method, or a function by its path from window, and
-//   gets its result (a promise is awaited).
+//   element, this.invoke(method, ...args) calls a #[Invokable] handler of its component and
+//   resolves to what it returned. The server reaches the instance with $browser->hook('Name').
+// - Invoking the server: Tether.invoke(element, method, ...args) is a Promise of the handler's
+//   result; it rejects with an Error on a failure or after Tether.timeout ms (Tether.invoke.within(ms, ...)
+//   for another time).
+// - Ops: the server's calls into the browser, each one `op` frame answered by a `ret` frame with
+//   the same id: a function by its path from window, a property or method of an object it holds,
+//   executeString(), a module, a hook, an element. What JSON can carry goes back as a value;
+//   anything else (nodes, functions, Promises, class instances) stays here in the handle
+//   table, and the server gets a reference ({$: 'h', id}) it gives back as an argument. The server
+//   lets go with `rel` (references to give back), and its names and code are its own: nothing in
+//   an event or an answer from this page is ever a name or code here. A Promise is not awaited
+//   unless the server asks (the `await` op).
 // - Navigation (an App's pages): once live, a click on a link below the App, and the browser's
 //   back and forward, go over the connection; the frame that answers says the new URL and
 //   title, or that the browser should load the URL itself (http and https only).
@@ -41,7 +50,11 @@
   const here = () => location.pathname + location.search;
   const hooks = {};
   const instances = new Map(); // element => hook instance, while live
-  const waiting = new Map(); // reply id => {resolve, reject}: push() promises
+  const mounting = new WeakMap(); // hook instance => promise of its mounted()
+  const waiting = new Map(); // reply id => {resolve, reject, timer}: invoke() promises
+  const handles = new Map([[0, { obj: window, refs: Infinity }], [1, { obj: document, refs: Infinity }]]); // id => {obj, refs, seen}: objects the server holds
+  const handleIds = new WeakMap([[window, 0], [document, 1]]); // object => id
+  let lastHandle = 1;
   const acks = new Map(); // reply id => slot: paced events waiting for their acknowledgement
   let socket = null;
   let live = false;
@@ -93,7 +106,14 @@
       }
       for (const [id, promise] of waiting) {
         waiting.delete(id);
+        clearTimeout(promise.timer);
         promise.reject(new Error('The connection to the server closed'));
+      }
+      for (const id of handles.keys()) {
+        if (id > 1) {
+          handleIds.delete(handles.get(id).obj);
+          handles.delete(id);
+        }
       }
       if (event.code === 1008) {
         return;
@@ -104,6 +124,10 @@
   }
 
   function receive(frame) {
+    if (frame.t === 'op') {
+      perform(frame);
+      return;
+    }
     const morphed = new Set();
     if (frame.nav?.load) {
       if (/^https?:$/.test(new URL(frame.nav.load, location.href).protocol)) {
@@ -159,16 +183,19 @@
       morph(element, patch.html, new Set(patch.fresh), morphed);
     }
     attachHooks(morphed);
-    for (const c of frame.calls ?? []) {
-      run(c);
+    for (const [id, n] of frame.rel ?? []) {
+      unref(id, n);
     }
     for (const reply of others) {
       const promise = waiting.get(reply.r);
       waiting.delete(reply.r);
-      if ('e' in reply) {
-        promise?.reject(new Error(reply.e));
-      } else {
-        promise?.resolve(reply.v);
+      if (promise) {
+        clearTimeout(promise.timer);
+        if ('e' in reply) {
+          promise.reject(Object.assign(new Error(reply.e), { name: 'TetherError' }));
+        } else {
+          promise.resolve(reply.v);
+        }
       }
     }
   }
@@ -246,57 +273,227 @@
         continue;
       }
       const created = Object.create(hooks[name]);
-      Object.assign(created, { el: element, name, push: (method, ...args) => push(element, method, ...args) });
+      Object.assign(created, { el: element, name, invoke: (method, ...args) => invoke(element, method, ...args) });
       instances.set(element, created);
-      call(() => created.mounted?.());
+      // The server's calls to the hook wait for an async mounted()
+      mounting.set(created, Promise.resolve(call(() => created.mounted?.())).catch((error) => console.error('Tether hook error', error)));
     }
   }
 
-  // A js() call: a hook method of the component's ("Name.method"), or a function from window
-  async function run(c) {
-    let result;
-    try {
-      const component = document.querySelector(`[tether-id="${c.c}"]`);
-      const path = c.f.split('.');
-      let target = window;
-      if (hooks[path[0]]) {
-        const element = component?.matches(`[tether-hook="${path[0]}"]`) ? component : component?.querySelector(`[tether-hook="${path[0]}"]`);
-        target = instances.get(element);
-        if (!target) {
-          throw new Error(`Component ${c.c} has no live tether-hook="${path[0]}" element`);
+  // ---- Ops: the server's calls into the browser -----------------------------------------------
+  //
+  // Names come from the server, never from the page's events or answers; these are the last
+  // check for a server that took one from input
+  const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__']);
+  const safe = (n) => {
+    const text = String(n);
+    if (FORBIDDEN.has(text)) {
+      throw new TypeError(`"${text}" can not be used by name`);
+    }
+    return text;
+  };
+  const stale = () => Object.assign(new Error('The browser no longer holds that object'), { name: 'StaleHandle' });
+
+  // A JSON-able value, or a reference for what JSON can not carry. $taken collects the
+  // references given, to take them back if the answer is not sent.
+  function pack(value, taken, seen = new Set()) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    switch (typeof value) {
+      case 'boolean': case 'string': return value;
+      case 'number': return Number.isFinite(value) ? value : null;
+      case 'bigint': throw new TypeError('A BigInt can not be sent');
+      case 'function': return reference(value, 'fn', taken);
+      case 'symbol': return reference(value, 'o', taken);
+    }
+    if (value instanceof Promise) {
+      // The server awaits it later: until then a rejection is not an unhandled one
+      value.catch(() => {});
+      return reference(value, 'p', taken);
+    }
+    const proto = Object.getPrototypeOf(value);
+    const plain = Array.isArray(value) || ((proto === Object.prototype || proto === null) && Object.prototype.toString.call(value) !== '[object Module]' && !('$' in value));
+    if (!plain) {
+      return reference(value, 'o', taken);
+    }
+    if (seen.has(value)) {
+      throw new TypeError('A circular structure can not be sent by value');
+    }
+    seen.add(value);
+    const copy = Array.isArray(value) ? value.map((v) => pack(v, taken, seen)) : Object.fromEntries(Object.entries(value).map(([k, v]) => [k, pack(v, taken, seen)]));
+    seen.delete(value);
+    return copy;
+  }
+
+  function reference(obj, kind, taken) {
+    let id = handleIds.get(obj);
+    if (id === undefined) {
+      id = ++lastHandle;
+      handleIds.set(obj, id);
+      handles.set(id, { obj, refs: 0, seen: false });
+    }
+    const entry = handles.get(id);
+    entry.refs++;
+    entry.seen ||= obj instanceof Node && obj.isConnected;
+    taken.push(id);
+    return { $: 'h', id, k: kind };
+  }
+
+  function unref(id, n) {
+    const entry = handles.get(id);
+    if (entry && id > 1 && (entry.refs -= n) <= 0) {
+      handleIds.delete(entry.obj);
+      handles.delete(id);
+    }
+  }
+
+  // Arguments from the server: references become their objects
+  function unpack(value) {
+    if (Array.isArray(value)) {
+      return value.map(unpack);
+    }
+    if (value === null || typeof value !== 'object') {
+      return value;
+    }
+    if (value.$ === 'h') {
+      return held(value.id);
+    }
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unpack(v)]));
+  }
+
+  function held(id) {
+    const entry = handles.get(id);
+    if (!entry || (entry.seen && entry.obj instanceof Node && !entry.obj.isConnected)) {
+      throw stale();
+    }
+    return entry.obj;
+  }
+
+  // An object by its path from window, with the object it is read from
+  function lookup(path) {
+    const parts = String(path).split('.').map(safe);
+    if (parts[0] === 'eval' || parts[0] === 'Function') {
+      throw new TypeError(`${parts[0]} can not be called by name`);
+    }
+    const last = parts.pop();
+    let owner = window;
+    for (const part of parts) {
+      owner = owner?.[part];
+    }
+    return [owner, owner?.[last]];
+  }
+
+  const component = (id) => document.querySelector(`[tether-id="${CSS.escape(String(id))}"]`);
+  const method = (target, member) => {
+    if (typeof target?.[safe(member)] !== 'function') {
+      throw new TypeError(`${member} is not a function`);
+    }
+    return target[member];
+  };
+
+  // One op. Its value is wrapped: an async function must not flatten a Promise the server wants as an object.
+  async function execute(op) {
+    const args = unpack(op.a ?? []);
+    switch (op.o) {
+      case 'path': {
+        const [owner, fn] = lookup(op.p);
+        if (typeof fn !== 'function') {
+          throw new TypeError(`${op.p} is not a function`);
         }
-        path.shift();
+        return { v: fn.apply(owner, args) };
       }
-      const name = path.pop();
-      for (const key of path) {
-        target = target?.[key];
+      case 'new': {
+        const [, ctor] = lookup(op.p);
+        if (typeof ctor !== 'function') {
+          throw new TypeError(`${op.p} is not a constructor`);
+        }
+        return { v: new ctor(...args) };
       }
-      if (typeof target?.[name] !== 'function') {
-        throw new Error(`${c.f} is not a function`);
+      case 'eval':
+        return { v: new Function(...op.n.map(safe), String(op.p))(...args) };
+      case 'import':
+        return { v: await import(new URL(String(op.p), location.href).href) };
+      case 'hook': {
+        const root = component(op.c);
+        const selector = `[tether-hook="${CSS.escape(String(op.p))}"]`;
+        const instance = instances.get(root?.matches(selector) ? root : root?.querySelector(selector));
+        if (!instance) {
+          throw new Error(`Component ${op.c} has no live tether-hook="${op.p}" element`);
+        }
+        await mounting.get(instance);
+        return { v: instance };
       }
-      result = JSON.stringify({ t: 'return', i: c.i, v: (await target[name](...c.a)) ?? null });
-    } catch (error) {
-      result = JSON.stringify({ t: 'return', i: c.i, e: String(error?.message ?? error) });
+      case 'find': {
+        const root = component(op.c);
+        return { v: op.p === null ? root : root?.querySelector(String(op.p)) };
+      }
+      case 'get': return { v: held(op.h)[safe(op.p)] };
+      case 'set': held(op.h)[safe(op.p)] = args[0]; return { v: null };
+      case 'has': return { v: held(op.h)[safe(op.p)] != null };
+      case 'del': delete held(op.h)[safe(op.p)]; return { v: null };
+      case 'call': { const target = held(op.h); return { v: method(target, op.p).apply(target, args) }; }
+      case 'invoke': {
+        const target = held(op.h);
+        if (typeof target !== 'function') {
+          throw new TypeError('The object is not a function');
+        }
+        return { v: target(...args) };
+      }
+      case 'str': return { v: String(held(op.h)) };
+      case 'val': return { v: JSON.parse(JSON.stringify(held(op.h)) ?? 'null') };
+      case 'await': return { v: await held(op.h) };
     }
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.send(result);
+    throw new TypeError(`No such op: ${String(op.o).slice(0, 32)}`);
+  }
+
+  async function perform(op) {
+    const taken = [];
+    let answer;
+    try {
+      const { v } = await execute(op);
+      answer = { t: 'ret', i: op.i, v: pack(v, taken) };
+    } catch (error) {
+      answer = { t: 'ret', i: op.i, e: { m: String(error?.message ?? error), n: String(error?.name ?? 'Error'), s: String(error?.stack ?? '') } };
+    }
+    let text = JSON.stringify(answer);
+    if (!fits(text)) {
+      answer = { t: 'ret', i: op.i, e: { m: 'The answer is too large to send', n: 'RangeError', s: '' } };
+      text = JSON.stringify(answer);
+      taken.forEach((id) => unref(id, 1));
+    }
+    if (live && socket.readyState === WebSocket.OPEN) {
+      socket.send(text);
+    } else {
+      taken.forEach((id) => unref(id, 1));
     }
   }
 
-  // Call a handler of the component element is in; resolves to what it returned
-  function push(element, method, ...args) {
-    const component = element.closest('[tether-id]');
-    if (!component || !live || socket.readyState !== WebSocket.OPEN) {
+  // ---- Invoking a handler of the component element is in; a Promise of what it returned -----------
+  let timeout = 10000;
+  function invoke(element, handler, ...args) {
+    return within(timeout, element, handler, ...args);
+  }
+
+  function within(ms, element, handler, ...args) {
+    const root = element.closest('[tether-id]');
+    if (!root || !live || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('Not connected to the server'));
     }
     const r = nextReply + 1;
-    const text = JSON.stringify({ c: component.getAttribute('tether-id'), m: method, a: args, r });
+    const text = JSON.stringify({ c: root.getAttribute('tether-id'), m: handler, a: args, r, x: true });
     if (!fits(text) || !take()) {
       return Promise.reject(new Error('The call was not sent: too large, or too many'));
     }
     nextReply = r;
     socket.send(text);
-    return new Promise((resolve, reject) => waiting.set(r, { resolve, reject }));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        waiting.delete(r);
+        reject(Object.assign(new Error(`The server did not answer ${handler} in ${ms} ms`), { name: 'TimeoutError' }));
+      }, ms);
+      waiting.set(r, { resolve, reject, timer });
+    });
   }
 
   // ---- The family table: the only place where event types differ --------------------------
@@ -454,7 +651,7 @@
 
   // ---- BIND: tether-* attributes into bindings ---------------------------------------------
   const ALIASES = new Set(['click', 'input', 'change', 'submit', 'keydown']);
-  const RESERVED = new Set(['id', 'owner', 'hook', 'ignore', 'reload', 'keep', 'args', 'event', 'bind', 'mount', 'offline']);
+  const RESERVED = new Set(['id', 'owner', 'hook', 'ref', 'ignore', 'reload', 'keep', 'args', 'event', 'bind', 'mount', 'offline']);
   const FLAGS = new Set(['prevent', 'passive', 'once', 'self', 'capture', 'window', 'document', 'outside', 'norepeat', 'stop', 'nofield', 'held',
     'shift', 'ctrl', 'alt', 'meta', 'mod', 'mouse', 'pen', 'touch', 'left', 'middle', 'right', 'latest', 'send', 'serial', 'drop']);
   const KEY_ALIASES = { space: ' ', plus: '+', minus: '-', dot: '.', comma: ',', slash: '/', equals: '=' };
@@ -1049,7 +1246,15 @@
       hooks[name] = definition;
       attachHooks(new Set());
     },
-    push,
+    invoke: Object.assign(invoke, { within }),
+    get timeout() {
+      return timeout;
+    },
+    set timeout(ms) {
+      timeout = ms;
+    },
+    // The objects the server holds: for tests, and to see a leak
+    handleCount: () => handles.size - 2,
     // Read the tether-* attributes of markup a hook inserted
     bind: bindTree,
     debug: /[?&]tether-debug\b/.test(location.search) || (() => {

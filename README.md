@@ -58,7 +58,8 @@ the closure runs for both, so a redirect or a 404 in it covers both.
   connection: the layout, a call, a half-typed message survive moving between pages.
 - **Many users**: swerve's publish/subscribe carries messages between tabs and workers.
 - **JavaScript when you need it**: hooks give elements a JavaScript side (WebRTC, a canvas, an
-  editor) that calls handlers, and that the server calls with `js()`.
+  editor) that calls handlers, and that the server calls and waits for: `$this->browser()->call(...)`,
+  `$ctx->fillRect(...)` on a canvas, `phasync::await()` on a Promise.
 - **Failures** are contained by error boundaries; without one, the tab starts over.
 - **Any framework**, or none: `Tether::from()` needs only the PSR-7 request. With a framework
   whose request state follows the request (not process-wide globals), such as mini, the tab is
@@ -91,12 +92,14 @@ and PHP 8.3 or later runs it. You don't have to start there:
 2. [Components](docs/components.md): props, render(), children, mount(), run(), go(), rendering.
 3. [Apps and navigation](docs/apps.md): for several live pages: routes, pages, layouts that survive navigation.
 4. [Events and JavaScript](docs/events-and-javascript.md): every DOM event with modifiers
-   (`tether-on-pointermove.throttle-50`), typed event data, pacing and limits; hooks, js(),
+   (`tether-on-pointermove.throttle-50`), typed event data, pacing and limits; hooks,
    tether-ignore.
-5. [State, sessions and many users](docs/state.md): the tab's request, sign-in, the database,
+5. [JavaScript interop](docs/javascript-interop.md): the server calls the browser and waits, V8Js-style
+   (`call`, `executeString`, objects, Promises); the browser awaits handlers (`Tether.invoke`).
+6. [State, sessions and many users](docs/state.md): the tab's request, sign-in, the database,
    publish/subscribe between tabs, presence, streaming from an LLM.
-6. [Errors](docs/errors.md): error boundaries, crashes, logging.
-7. [Security](docs/security.md): what the browser can do, escaping, origins, what the closure checks.
+7. [Errors](docs/errors.md): error boundaries, crashes, logging.
+8. [Security](docs/security.md): what the browser can do, escaping, origins, what the closure checks.
 
 ## Development
 
@@ -106,6 +109,6 @@ changes to them take effect here at once.
 
 - `vendor/bin/pest`: the PHP tests.
 - `node tests/browser/demo.mjs http://127.0.0.1:8080/` and
-  `node tests/browser/app.mjs http://127.0.0.1:8080`: the demo in headless Chrome, against a
+  `node tests/browser/app.mjs http://127.0.0.1:8080` (and `interop.mjs`, `events.mjs`): the demo in headless Chrome, against a
   running demo (see [Running Tether](docs/running.md)).
 - `node tests/load/tabs.mjs http://127.0.0.1:8080/fast?rate=50 1000 10`: 1,000 simulated tabs.

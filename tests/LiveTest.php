@@ -6,6 +6,7 @@ use mini\Mini;
 use Tether\Circuit;
 use Tether\Component;
 use Tether\ErrorBoundary;
+use Tether\Invokable;
 use Tether\JsException;
 
 /** A component for these tests: what it did, in $log; its behaviour, from its $mode prop. */
@@ -39,6 +40,7 @@ final class Probe extends Component
         }
     }
 
+    #[Invokable]
     public function add(int $n, string ...$labels): int
     {
         $this->count += $n;
@@ -56,11 +58,13 @@ final class Probe extends Component
         throw new RuntimeException('SQLSTATE[HY000]: host db.internal');
     }
 
+    #[Invokable]
     public function callBrowser(): mixed
     {
-        return $this->js('Probe.answer', 42);
+        return $this->browser()->call('Probe.answer', 42);
     }
 
+    #[Invokable]
     public function whoAmI(): ?string
     {
         return \mini\request()->getQueryParams()['tab'] ?? null;
@@ -72,7 +76,7 @@ final class Probe extends Component
             throw new RuntimeException('render failed');
         }
         if ('js-in-render' === $this->mode) {
-            $this->js('alert', 'no');
+            $this->browser()->call('alert', 'no');
         }
 
         return "<p>{$this->count}</p>";
@@ -173,9 +177,9 @@ test('mount() runs once per instance, with the props set, before the first rende
     expect($out['html'])->toBe('<p tether-id="c1">0</p>');
 });
 
-test('a push gets the handler\'s return value, after the frame that shows the new state', function () {
+test('an invocation gets the handler\'s return value, after the frame that shows the new state', function () {
     $out = live(Probe::class, [], static function (Circuit $circuit) {
-        $circuit->event('c1', 'add', [5], reply: 1);
+        $circuit->event('c1', 'add', [5], reply: 1, value: true);
         phasync::sleep(0.02);
     });
     $frame = $out['frames'][0];
@@ -202,49 +206,40 @@ test('only the component\'s own public methods are handlers', function (string $
     live(Probe::class, [], static function (Circuit $circuit) use ($method) {
         expect(fn () => $circuit->event('c1', $method, []))->toThrow(InvalidArgumentException::class);
     });
-})->with(['render', 'mount', 'run', 'requestRender', 'js', 'child', 'attach', '__construct', 'nope']);
+})->with(['render', 'mount', 'run', 'requestRender', 'browser', 'awaitRender', 'child', 'attach', '__construct', 'nope']);
 
 test('variadic handlers take any number of arguments of their type', function () {
     $out = live(Probe::class, [], static function (Circuit $circuit) {
-        $circuit->event('c1', 'add', [1, 'a', 'b'], reply: 1);
+        $circuit->event('c1', 'add', [1, 'a', 'b'], reply: 1, value: true);
         phasync::sleep(0.02);
     });
     expect(replies($out['frames'])[1]['v'])->toBe(1);
 });
 
-test('js() goes in the frame after the component\'s state, and returns what the browser answers', function () {
-    $out = live(Probe::class, [], static function (Circuit $circuit, ArrayObject $frames) {
-        $circuit->event('c1', 'callBrowser', [], reply: 1);
+test('a call into the browser returns what the browser answers', function () {
+    $out = live(Probe::class, [], static function (Circuit $circuit) {
+        $circuit->event('c1', 'callBrowser', [], reply: 1, value: true);
         phasync::sleep(0.02);
-        $call = $frames[0]['calls'][0];
-        expect($frames[0]['patches'][0]['id'])->toBe('c1');
-        expect($call)->toMatchArray(['c' => 'c1', 'f' => 'Probe.answer', 'a' => [42]]);
-        $circuit->returned($call['i'], 'forty-two', null);
-        phasync::sleep(0.02);
-    });
+    }, browser: static fn (array $op, Circuit $circuit) => $circuit->returned($op['i'], 'forty-two', null));
+    $op = array_values(array_filter($out['frames'], static fn ($f) => 'op' === $f['t']))[0];
+    expect($op)->toMatchArray(['o' => 'path', 'p' => 'Probe.answer', 'a' => [42]]);
     expect(replies($out['frames'])[1]['v'])->toBe('forty-two');
 });
 
 test('a JavaScript error comes back as a JsException', function () {
-    $out = live(Probe::class, [], static function (Circuit $circuit, ArrayObject $frames) {
+    $out = live(Probe::class, [], static function (Circuit $circuit) {
         $circuit->event('c1', 'callBrowser', [], reply: 1);
         phasync::sleep(0.02);
-        $circuit->returned($frames[0]['calls'][0]['i'], null, 'Probe.answer is not a function');
-        phasync::sleep(0.02);
-    });
+    }, browser: static fn (array $op, Circuit $circuit) => $circuit->returned($op['i'], null, ['m' => 'Probe.answer is not a function', 'n' => 'TypeError']));
     // The handler did not catch it: the push is rejected, and the tab crashed
     expect(replies($out['frames'])[1]['e'])->toBe('The handler failed');
     expect($out['crashed'])->toBe('Probe.answer is not a function');
 });
 
-test('js() in render() is refused', function () {
+test('a call into the browser in render() is refused', function () {
     $out = live(Probe::class, ['mode' => 'js-in-render'], static fn () => null);
     expect($out['html'])->toBeNull();
-    expect($out['crashed'])->toContain('js() is for event handlers and run()');
-});
-
-test('js() is refused before the tab is live', function () {
-    expect(fn () => phasync::run(fn () => (new Circuit())->js(new Probe(), 'alert', [])))->toThrow(LogicException::class);
+    expect($out['crashed'])->toContain('The browser can be called from event handlers and run()');
 });
 
 test('a handler that fails, with no error boundary above, crashes the tab: everything unmounts', function () {
@@ -339,7 +334,7 @@ test('a boundary\'s catch() is not an event handler', function () {
 
 test('with mini\'s RequestDispatcher::within() as enter, component coroutines see the tab\'s request', function () {
     $out = live(Probe::class, [], static function (Circuit $circuit) {
-        $circuit->event('c1', 'whoAmI', [], reply: 1);
+        $circuit->event('c1', 'whoAmI', [], reply: 1, value: true);
         phasync::sleep(0.02);
     });
     expect(replies($out['frames'])[1]['v'])->toBe('t1');
@@ -386,14 +381,13 @@ test('a change made while render() waits is rendered in the next frame', functio
     expect(end($patches)['html'])->toStartWith('<div tether-id="c1">1');
 });
 
-test('js() from another component while a render waits is not refused', function () {
+test('a call into the browser from another component while a render waits is not refused', function () {
     $out = live(Host::class, [], static function (Circuit $circuit) {
         $circuit->event('c1', 'show', []);
         phasync::sleep(0.02);
         $circuit->event('c2', 'callBrowser', []);
         phasync::sleep(0.15);
-    });
+    }, browser: static fn (array $op, Circuit $circuit) => $circuit->returned($op['i'], null, null));
     expect($out['crashed'])->toBeNull();
-    $calls = array_merge(...array_map(static fn ($f) => $f['calls'] ?? [], $out['frames']));
-    expect($calls)->toHaveCount(1);
+    expect(array_filter($out['frames'], static fn ($f) => 'op' === $f['t']))->toHaveCount(1);
 });

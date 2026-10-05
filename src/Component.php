@@ -24,8 +24,10 @@ use Psr\Http\Message\ServerRequestInterface;
  * - Event handlers: public methods of the component's own class, called from the browser
  *   (`tether-click="increment"`, or a hook's push()). Anyone can call them with any JSON
  *   arguments: the arguments must match the parameter types, and the handler checks the rest.
- *   Its return value goes back to a hook's push().
- * - js(): call a function in the browser and get its result.
+ *   Its return value goes back to the browser's Tether.invoke() when the handler is marked
+ *   #[Invokable].
+ * - browser(): call the browser, as in V8Js: functions, properties, elements, Promises.
+ * - awaitRender(): wait until the browser shows the component's current state.
  * - request(): the request of the tab: the page's request when it renders, the upgrade when live.
  *
  * A failure in any of them goes to the nearest ErrorBoundary above; with none, the tab starts
@@ -72,22 +74,27 @@ abstract class Component
     }
 
     /**
-     * Call a function in the browser, with JSON arguments, and wait for its result (a promise
-     * is awaited). The call reaches the browser after this component's current state: the page
-     * shows it when the function runs.
+     * The browser of this tab, to call from an event handler, run() or another coroutine of the
+     * component's (not render() or mount()): see {@see Browser}. A call waits for its answer,
+     * and only the calling coroutine waits.
      *
-     * $function is a hook of this component's and a method of it ("Call.answer": the first
-     * element in this component with tether-hook="Call"), or else a path from window
-     * ("navigator.clipboard.writeText").
-     *
-     * From an event handler or run(); not in render() or mount(). To not wait for the result,
-     * call it in a coroutine of its own: `phasync::go(fn () => $this->js(...))`.
-     *
-     * @throws JsException what the function threw, or that there is no such function
+     * ```php
+     * $width = $this->browser()->window->innerWidth;
+     * ```
      */
-    final protected function js(string $function, mixed ...$args): mixed
+    final protected function browser(): Browser
     {
-        return $this->circuit->js($this, $function, \array_values($args));
+        return $this->circuit->browser($this);
+    }
+
+    /**
+     * Render this component again soon, and wait until the browser shows it: before a call into
+     * the browser that depends on what the render changes (an element it adds, a value it
+     * sets). Calls into the browser do not send a pending render.
+     */
+    final protected function awaitRender(): void
+    {
+        $this->circuit->awaitRender($this);
     }
 
     /**

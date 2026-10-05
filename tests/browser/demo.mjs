@@ -113,12 +113,12 @@ try {
     await page.until(`document.getElementById('greeting').textContent.includes('Chrome')`);
   });
 
-  await check('js() calls a hook method and gets its result', async () => {
+  await check('browser()->hook() calls a hook method and gets its result', async () => {
     await click('[tether-click=measure]');
     await page.until(`/The browser says [1-9]\\d* ms/.test(document.getElementById('measured')?.textContent)`);
   });
 
-  await check('js() with a result that is not JSON fails with a JsException instead of hanging', async () => {
+  await check('a call with a result that is not JSON fails with a JsException instead of hanging', async () => {
     await click('[tether-click=badResult]');
     await page.until(`document.getElementById('js-error')?.textContent.length > 0`);
   });

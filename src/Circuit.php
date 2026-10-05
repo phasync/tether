@@ -8,13 +8,13 @@ use Swerve\Swerve;
 use Tether\Event\EventArgs;
 
 /**
- * One browser tab's components: the tree, rendering, events, calls to and from the browser,
+ * One browser tab's components: the tree, rendering, events, calls into the browser (Remote),
  * failures, and the components' coroutines.
  *
  * Rendering is decoupled from state changes: requestRender() puts a component in the tab's
  * redraw set and raises the tab's flag. The tab's writer coroutine (run()) wakes, renders every
- * component in the set once, parents first, and sends them as one frame, with the calls to the
- * browser and the replies to it made meanwhile; then it sends nothing more until 1/$maxFps has
+ * component in the set once, parents first, and sends them as one frame, with the replies to
+ * the browser made meanwhile; then it sends nothing more until 1/$maxFps has
  * passed. Whatever changes meanwhile joins the next frame. A slow client makes the send wait,
  * and the set keeps collecting: it gets fewer frames, never a backlog. A child whose parent
  * renders is rendered as part of it, if it was marked or is new; otherwise the parent's frame
@@ -53,24 +53,24 @@ final class Circuit
     /** The component whose render() is running, for child(). */
     private ?Node $rendering = null;
 
-    /** The coroutine running that render(): others may call js() meanwhile, as it waits. */
-    private ?\Fiber $renderer = null;
+    /** The coroutine running a render() or mount(): calls into the browser are refused there. Others may call meanwhile. */
+    private ?\Fiber $building = null;
+
+    /** A frame is being made and sent. */
+    private bool $flushing = false;
+
+    /** Raised when a frame has been sent: for awaitRender(). */
+    private \stdClass $flushed;
+
+    private readonly Remote $remote;
 
     /** @var array<string, true> ids rendered in the patch under way */
     private array $fresh = [];
 
     private ?Node $root = null;
 
-    /** @var list<array> calls to the browser for the next frame */
-    private array $calls = [];
-
     /** @var list<array> replies to the browser's calls for the next frame */
     private array $replies = [];
-
-    private int $nextCall = 0;
-
-    /** @var array<int, \stdClass> js() calls waiting for their result, by call id */
-    private array $pending = [];
 
     /** @var list<array{0: Node, 1: \Throwable}> failed handlers and run()s, for the writer */
     private array $failures = [];
@@ -111,6 +111,8 @@ final class Circuit
     ) {
         $this->tokens   = $limits->burst;
         $this->refilled = \microtime(true);
+        $this->flushed  = new \stdClass();
+        $this->remote   = new Remote($this, $send, $limits);
     }
 
     /**
@@ -147,7 +149,7 @@ final class Circuit
         $next = 0.0;
         try {
             while (true) {
-                while (!$this->dirty && !$this->calls && !$this->replies && !$this->failures && !$this->navigations && !$this->refused) {
+                while (!$this->dirty && !$this->remote->rel && !$this->replies && !$this->failures && !$this->navigations && !$this->refused) {
                     \phasync::awaitFlag($this);
                 }
                 $wait = $next - \microtime(true);
@@ -191,13 +193,32 @@ final class Circuit
             $this->root = null;
             $this->unmount($root);
         }
+        $this->remote->close();
+    }
+
+    /** The mount frame has been sent: the browser shows the components rendered for it. */
+    public function delivered(): void
+    {
+        $this->shown(\array_keys($this->fresh));
+    }
+
+    /** @param list<string> $ids */
+    private function shown(array $ids): void
+    {
+        foreach ($ids as $id) {
+            if (isset($this->nodes[$id])) {
+                $this->nodes[$id]->shown = true;
+            }
+        }
+        $this->remote->shown();
     }
 
     /**
      * An event from the browser: queue it for the component's inbox, which calls the handler
      * in a coroutine of the component's and renders the component. An unknown component is one the
-     * page no longer shows: ignored. With $reply, the browser waits for the handler's return
-     * value (a hook's push()), or for the acknowledgement of an event it paces.
+     * page no longer shows: ignored. With $reply, the browser waits for the handler to finish
+     * (an event it paces, or Tether.invoke()); with $value too it gets the handler's return
+     * value, which only a handler marked #[Invokable] may give.
      *
      * $payload is what the browser says about the event: the handler gets it as its last
      * parameter when that is typed EventArgs or a subclass (never otherwise: $args alone fill
@@ -209,7 +230,7 @@ final class Circuit
      *
      * @throws \InvalidArgumentException no such handler, or arguments it does not take
      */
-    public function event(string $id, string $method, array $args, ?int $reply = null, array $payload = []): void
+    public function event(string $id, string $method, array $args, ?int $reply = null, array $payload = [], bool $value = false): void
     {
         if (!$this->admit()) {
             return;
@@ -219,7 +240,7 @@ final class Circuit
             if (null === $node) {
                 throw new \InvalidArgumentException('No component ' . self::printable($id) . ': it has left the page');
             }
-            $args = self::bind($node->component, $method, $args, $payload);
+            $args = self::bind($node->component, $method, $args, $payload, $value);
         } catch (\InvalidArgumentException $e) {
             if (null !== $reply) {
                 $this->reply($reply, error: $e->getMessage());
@@ -246,7 +267,7 @@ final class Circuit
         }
         ++$this->running;
         ++$node->pending;
-        $node->events->enqueue([$method, $args, $reply]);
+        $node->events->enqueue([$method, $args, $reply, $value]);
         \phasync::raiseFlag($node);
     }
 
@@ -269,15 +290,49 @@ final class Circuit
         \phasync::raiseFlag($this);
     }
 
-    /** The browser's answer to a js() call. */
-    public function returned(int $call, mixed $value, ?string $error): void
+    /**
+     * The browser's answer to an op. One that answers nothing this tab asked is abuse, as an
+     * event is.
+     *
+     * @param array{n?: mixed, m?: mixed, s?: mixed}|null $error
+     */
+    public function returned(int $id, mixed $value, ?array $error): void
     {
-        if (isset($this->pending[$call])) {
-            $slot        = $this->pending[$call];
-            $slot->value = $value;
-            $slot->error = $error;
-            $slot->done  = true;
-            \phasync::raiseFlag($slot);
+        if (!$this->remote->returned($id, $value, $error)) {
+            $this->admit();
+        }
+    }
+
+    /** @internal see Component::browser() */
+    public function browser(Component $component): Browser
+    {
+        $node = $this->nodes[$component->tetherId ?? ''] ?? throw new \LogicException('browser() is for event handlers and run(): not render() or mount()');
+
+        return $node->browser ??= new Browser($this->remote, $node, fn (\Closure $fn) => $this->start($node, $fn));
+    }
+
+    /** @internal see Remote::op() */
+    public function assertNotBuilding(): void
+    {
+        if (null !== $this->building && \Fiber::getCurrent() === $this->building) {
+            throw new \LogicException('The browser can be called from event handlers and run(): not render() or mount()');
+        }
+    }
+
+    /** @internal see Remote::release() */
+    public function wake(): void
+    {
+        \phasync::raiseFlag($this);
+    }
+
+    /** @internal see Component::awaitRender() */
+    public function awaitRender(Component $component): void
+    {
+        $this->assertNotBuilding();
+        $id = $component->tetherId;
+        $this->requestRender($component);
+        while (isset($this->nodes[$id]) && ($this->flushing || isset($this->dirty[$id]))) {
+            \phasync::awaitFlag($this->flushed);
         }
     }
 
@@ -289,33 +344,6 @@ final class Circuit
         }
         $this->dirty[$component->tetherId] = true;
         \phasync::raiseFlag($this);
-    }
-
-    /** @internal see Component::js() */
-    public function js(Component $component, string $function, array $args): mixed
-    {
-        if (null === $this->send || (null !== $this->rendering && \Fiber::getCurrent() === $this->renderer)) {
-            throw new \LogicException('js() is for event handlers and run(): not render() or mount(), and not before the tab is live');
-        }
-        \json_encode($args, \JSON_THROW_ON_ERROR);
-        $call                  = ++$this->nextCall;
-        $this->pending[$call]  = $slot = new \stdClass();
-        $this->calls[]         = ['i' => $call, 'c' => $component->tetherId, 'f' => $function, 'a' => $args];
-        // After the component's current state: the call goes in the frame that shows it
-        $this->requestRender($component);
-        \phasync::raiseFlag($this);
-        try {
-            while (!isset($slot->done)) {
-                \phasync::awaitFlag($slot);
-            }
-        } finally {
-            unset($this->pending[$call]);
-        }
-        if (null !== $slot->error) {
-            throw new JsException($slot->error);
-        }
-
-        return $slot->value;
     }
 
     /** @internal see Component::child() */
@@ -359,13 +387,24 @@ final class Circuit
     }
 
     /**
-     * Render the marked components, parents first, and send them in a frame with the calls and
-     * replies.
+     * Render the marked components, parents first, and send them in a frame with the replies and
+     * the objects the browser may let go of.
      *
      * The failures of handlers and run()s are handled first, here: a coroutine can not unmount
      * the component it belongs to while it runs.
      */
     private function flush(): void
+    {
+        $this->flushing = true;
+        try {
+            $this->makeFrame();
+        } finally {
+            $this->flushing = false;
+            \phasync::raiseFlag($this->flushed);
+        }
+    }
+
+    private function makeFrame(): void
     {
         foreach ($this->failures as [$node, $e]) {
             if (isset($this->nodes[$node->component->tetherId]) && null === $this->fail($node, $e)) {
@@ -387,8 +426,9 @@ final class Circuit
                 $frame['patches'][] = $patch;
             }
         }
-        if ($this->calls) {
-            [$frame['calls'], $this->calls] = [$this->calls, []];
+        if ($this->remote->rel) {
+            $frame['rel'] = \array_map(null, \array_keys($this->remote->rel), $this->remote->rel);
+            $this->remote->rel = [];
         }
         if ($this->replies) {
             [$frame['replies'], $this->replies] = [$this->replies, []];
@@ -398,6 +438,9 @@ final class Circuit
         }
         if (\count($frame) > 1) {
             ($this->send)($frame);
+            foreach ($frame['patches'] ?? [] as $patch) {
+                $this->shown($patch['fresh']);
+            }
         }
     }
 
@@ -508,12 +551,16 @@ final class Circuit
         $component->attach($this, $id);
         $node = new Node($component, $parent, null === $parent ? 0 : $parent->depth + 1);
         self::setProps($node, $props);
+        $outer          = $this->building;
+        $this->building = \Fiber::getCurrent();
         try {
             $component->mount();
         } catch (CancelledException $e) {
             throw $e;
         } catch (\Throwable $e) {
             throw new RenderFailure($node, $e);
+        } finally {
+            $this->building = $outer;
         }
         $this->nodes[$id] = $node;
         if (null !== $this->send) {
@@ -535,13 +582,13 @@ final class Circuit
         }
         while (true) {
             while (!$node->events->isEmpty()) {
-                [$method, $args, $reply] = $node->events->dequeue();
-                $this->start($node, function () use ($node, $method, $args, $reply) {
+                [$method, $args, $reply, $carry] = $node->events->dequeue();
+                $this->start($node, function () use ($node, $method, $args, $reply, $carry) {
                     try {
                         $value = $node->component->$method(...$args);
                         if (null !== $reply) {
-                            \json_encode($value, \JSON_THROW_ON_ERROR);
-                            $this->reply($reply, $value);
+                            $carry && \json_encode($value, \JSON_THROW_ON_ERROR);
+                            $this->reply($reply, $carry ? $value : null);
                         }
                     } catch (CancelledException $e) {
                         throw $e;
@@ -617,9 +664,9 @@ final class Circuit
     private function render(Node $node): string
     {
         $outer           = $this->rendering;
-        $outerRenderer   = $this->renderer;
+        $outerBuilding   = $this->building;
         $this->rendering = $node;
-        $this->renderer  = \Fiber::getCurrent();
+        $this->building  = \Fiber::getCurrent();
         // Marked again while this waits (mount() of a child, say): rendered again
         unset($this->dirty[$node->component->tetherId]);
         $node->positions = [];
@@ -636,7 +683,7 @@ final class Circuit
             throw new RenderFailure($node, $e);
         } finally {
             $this->rendering = $outer;
-            $this->renderer  = $outerRenderer;
+            $this->building  = $outerBuilding;
         }
         $html = '<' . $m[1] . ' tether-id="' . $node->component->tetherId . '"' . \substr($html, \strlen($m[0]));
         // Children no longer placed leave
@@ -659,6 +706,7 @@ final class Circuit
         }
         $id = $node->component->tetherId;
         unset($this->nodes[$id], $this->dirty[$id]);
+        $node->browser?->retire();
         $this->running -= $node->pending;
         $node->pending = 0;
         foreach ($node->fibers as $fiber => $_) {
@@ -694,11 +742,13 @@ final class Circuit
      * (none of Component's or ErrorBoundary's), and arguments of its parameters' types. A last
      * parameter typed EventArgs (or a subclass) is not one of them: it gets $payload.
      *
+     * With $value, the browser wants the result: the method must be #[Invokable].
+     *
      * @return list<mixed> the arguments to call it with
      *
      * @throws \InvalidArgumentException
      */
-    private static function bind(Component $component, string $method, array $args, array $payload): array
+    private static function bind(Component $component, string $method, array $args, array $payload, bool $value): array
     {
         $name = $component::class . '::' . self::printable($method) . '()';
         if (!\method_exists($component, $method) || \str_starts_with($method, '__') || \method_exists(Component::class, $method) || ($component instanceof ErrorBoundary && 'catch' === \strtolower($method))) {
@@ -707,6 +757,9 @@ final class Circuit
         $reflection = new \ReflectionMethod($component, $method);
         if (!$reflection->isPublic() || $reflection->isStatic()) {
             throw new \InvalidArgumentException("$name is not an event handler");
+        }
+        if ($value && !$reflection->getAttributes(Invokable::class)) {
+            throw new \InvalidArgumentException("$name is not #[Invokable]: its result is not for the browser");
         }
         $parameters = $reflection->getParameters();
         $required   = $reflection->getNumberOfRequiredParameters();

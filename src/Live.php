@@ -115,7 +115,7 @@ final class Live
     }
 
     /**
-     * A live tab: mount $page, then events, the results of js() calls and navigation, until the
+     * A live tab: mount $page, then events, the browser's answers to calls into it and navigation, until the
      * connection closes.
      *
      * @param (\Closure(string): array{0: ?Page, 1: string})|null $resolve a URL's page, or null
@@ -139,17 +139,15 @@ final class Live
                 return;
             }
             $ws->send(\json_encode(['t' => 'mount', 'html' => $html, 'lim' => ['eps' => $limits->eventsPerSecond, 'burst' => $limits->burst, 'bytes' => $limits->bytes]], \JSON_THROW_ON_ERROR));
+            $circuit->delivered();
             $writer = \phasync::go($circuit->run(...));
             while (null !== ($message = $ws->receive())) {
                 $message = \json_decode($message, true);
                 if (!\is_array($message)) {
                     continue;
                 }
-                if ('return' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
-                    if (!$circuit->admit()) {
-                        continue;
-                    }
-                    $circuit->returned($message['i'], $message['v'] ?? null, isset($message['e']) ? (string) $message['e'] : null);
+                if ('ret' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
+                    $circuit->returned($message['i'], $message['v'] ?? null, \is_array($message['e'] ?? null) ? $message['e'] : null);
                 } elseif ('navigate' === ($message['t'] ?? null) && \is_string($message['u'] ?? null)) {
                     if (!$circuit->admit()) {
                         continue;
@@ -157,7 +155,7 @@ final class Live
                     $circuit->navigate($message['u'], (bool) ($message['p'] ?? true));
                 } elseif (\is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_int($message['r'] ?? 0) && \is_array($message['e'] ?? [])) {
                     try {
-                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null, $message['e'] ?? []);
+                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null, $message['e'] ?? [], true === ($message['x'] ?? false));
                     } catch (\InvalidArgumentException $e) {
                         Swerve::log()->warning('Tether: {message}', ['message' => $e->getMessage()]);
                     }

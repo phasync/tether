@@ -89,13 +89,14 @@ public function send(array $form): void
 }
 ```
 
-A handler's exception text is not sent to the browser: a `push()` rejects with "The handler failed".
+A handler's exception text is not sent to the browser: an `invoke()` from the browser rejects with "The handler failed".
 A failure while the tab's frames are rendered or sent (a boundary's `catch()` that throws, a value
 that can't be encoded as JSON) crashes the tab like any other, and is logged.
 
-A `js()` call that fails (the function throws, is missing, or its result can't be JSON) throws
-`Tether\JsException` into the handler: catch it where the browser may lack something (a camera,
-a permission).
+A call into the browser that fails (the function throws or is missing, a Promise rejects, the
+result can't be JSON, no answer in time) throws `Tether\JsException` (or a subclass) into the
+handler: catch it where the browser may lack something (a camera, a permission); see
+[JavaScript interop](javascript-interop.md).
 
 ## Logging
 

@@ -151,7 +151,7 @@ held back.
 
 ## Handlers
 
-- A handler runs in a coroutine of its own: it may wait (`phasync::sleep()`, I/O, `js()`)
+- A handler runs in a coroutine of its own: it may wait (`phasync::sleep()`, I/O, a call to the [browser](javascript-interop.md))
   without holding up anything else. Events for one component are started in the order they
   came, and don't wait for each other: a second click while the first handler still waits runs
   alongside it (or use `serial`/`drop`). Guard handlers that must not overlap (a Send button, a
@@ -197,8 +197,8 @@ to the bottom. A hook gives an element a JavaScript object for as long as the ta
 // html/app.js, loaded with $t->mount(..., head: '<script src="/app.js" defer></script>')
 Tether.hook('Call', {
   mounted() {
-    // this.el: the element; this.push(method, ...args): call a handler of its component
-    this.push('ready', navigator.userAgent).then((reply) => console.log(reply));
+    // this.el: the element; this.invoke(method, ...args): call a handler of its component
+    this.invoke('ready', navigator.userAgent).then((reply) => console.log(reply));
   },
   updated() {
     // the element was rendered again
@@ -206,7 +206,7 @@ Tether.hook('Call', {
   destroyed() {
     // the element left the page, or the tab lost its connection: clean up
   },
-  // methods the server may call with js('Call.answer', ...)
+  // methods the server may call: $this->browser()->hook('Call')->answer(...)
   async answer(offer) {
     // ...
     return 'done';
@@ -217,34 +217,22 @@ Tether.hook('Call', {
 - `mounted()` runs when the tab goes live (not on the first render, which is not live), or when
   the element appears later. `destroyed()` when it leaves, and for every hook when the
   connection drops; they mount again after the reconnect, for the new components.
-- `this.push(method, ...args)` calls a handler of the element's component with JSON arguments,
-  and returns a promise of what the handler returned (JSON). It rejects when the handler fails
-  or is not allowed, and when the connection closes.
+- `this.invoke(method, ...args)` calls a handler of the element's component with JSON arguments,
+  and returns a promise of what the handler returned (JSON). The handler must be marked
+  `#[Tether\Invokable]`. It rejects when the handler fails or is not allowed, after a timeout,
+  and when the connection closes ([JavaScript interop](javascript-interop.md)).
+- The server calls the hook's methods, and reads its properties, with `$this->browser()->hook('Call')`;
+  it waits for an `async mounted()`.
 - Register hooks before the tab goes live: in a script loaded with `defer` in the page's head.
 - A hook's `mounted()` is also how JavaScript (and a browser test) knows the tab is live.
   While a lost connection is being restored, `<html>` has the attribute `tether-offline`; it is
   not set before the first connection.
 
-## js(): calling the browser from the server
+## Calling the browser from the server
 
-```php
-public function measure(): void
-{
-    $elapsed = $this->js('Stopwatch.elapsed');        // a method of this component's hook
-    $this->js('navigator.clipboard.writeText', 'hi');  // or a function, by its path from window
-}
-```
-
-- `$this->js($function, ...$args)` sends the call and **waits for its result** (a returned
-  promise is awaited), which comes back as PHP values. A JavaScript error comes back as
-  `Tether\JsException`.
-- `'Name.method'` calls a method of the hook named `Name` on this component's element or inside
-  it (the first one); any other name is a path from `window`.
-- The call reaches the browser in the frame after the component's current state: the page
-  already shows what the handler changed when the function runs (render first, then scroll).
-- From event handlers, `run()` and the component's other coroutines (`go()`); not from
-  `render()` or `mount()`.
-- Not interested in the result? Don't wait for it: `$this->go(fn () => $this->js('...'))`.
+`$this->browser()->call('Call.answer', ...)`, `executeString()`, element references and the rest
+are in [JavaScript interop](javascript-interop.md). To not wait for a result, start the call in a
+coroutine: `$this->go(fn () => $this->browser()->call('...'))`.
 
 ## tether-ignore: elements the browser owns
 
@@ -279,17 +267,18 @@ final class Call extends Component
     {
         foreach (Swerve\Swerve::subscribe("call:{$this->me}") as $message) {
             $signal = json_decode($message, true);
-            $this->go(fn () => $this->js('Call.signal', $signal)); // don't wait
+            $this->go(fn () => $this->browser()->hook('Call')->signal($signal)); // don't wait
         }
     }
 
     // <button tether-click="start">Call</button>: the browser makes the offer
     public function start(): void
     {
-        $this->js('Call.call');
+        $this->browser()->hook('Call')->call();
     }
 
-    // from the hook: this.push('signal', {type: 'offer', sdp: ...})
+    // from the hook: this.invoke('signal', {type: 'offer', sdp: ...})
+    #[Tether\Invokable]
     public function signal(array $signal): void
     {
         Swerve\Swerve::publish("call:{$this->peer}", json_encode($signal));
@@ -306,7 +295,7 @@ final class Call extends Component
 Tether.hook('Call', {
   async mounted() {
     this.pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    this.pc.onicecandidate = (e) => e.candidate && this.push('signal', { type: 'candidate', candidate: e.candidate.toJSON() });
+    this.pc.onicecandidate = (e) => e.candidate && this.invoke('signal', { type: 'candidate', candidate: e.candidate.toJSON() });
     this.pc.ontrack = (e) => { this.el.querySelector('#remote').srcObject = e.streams[0]; };
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     this.el.querySelector('#local').srcObject = stream;
@@ -315,15 +304,15 @@ Tether.hook('Call', {
   destroyed() {
     this.pc?.close();
   },
-  async call() {           // $this->js('Call.call') on the calling side
+  async call() {           // $this->browser()->hook('Call')->call() on the calling side
     await this.pc.setLocalDescription(await this.pc.createOffer());
-    this.push('signal', { type: 'offer', sdp: this.pc.localDescription.sdp });
+    this.invoke('signal', { type: 'offer', sdp: this.pc.localDescription.sdp });
   },
   async signal(s) {        // from the other side, through the server
     if (s.type === 'offer') {
       await this.pc.setRemoteDescription(s);
       await this.pc.setLocalDescription(await this.pc.createAnswer());
-      this.push('signal', { type: 'answer', sdp: this.pc.localDescription.sdp });
+      this.invoke('signal', { type: 'answer', sdp: this.pc.localDescription.sdp });
     } else if (s.type === 'answer') {
       await this.pc.setRemoteDescription(s);
     } else if (s.type === 'candidate') {

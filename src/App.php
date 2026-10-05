@@ -128,7 +128,7 @@ abstract class App implements RequestHandlerInterface
 
     /**
      * A tab's live connection: the first message is the URL the tab shows, the rest are
-     * events, the results of js() calls, and navigation.
+     * events, the browser's answers to calls into it, and navigation.
      */
     private function live(WebSocket $ws, ServerRequestInterface $request, string $base): void
     {

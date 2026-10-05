@@ -225,6 +225,8 @@ vendor/bin/swerve --http=8080 --public=html swerve.php
   the tab.
 - `/app/`: an App: rooms in one layout, a stand-in for a call that keeps running while you move
   between rooms, redirects, and an about page with a root of its own.
+- `/interop`: every call from the server into the browser (a canvas, Promises, modules, helpers) and
+  `Tether.invoke` back, one button each.
 - `/fast?rate=50`: a component updating 50 times a second.
 
 `playground/plain` is `Tether::from()` with no framework: a counter at `/` and a chat room at

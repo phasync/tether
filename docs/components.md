@@ -137,7 +137,7 @@ public function mount(): void
 }
 ```
 
-It runs inside a render, so keep it short. It may not call `js()`: nothing is in the browser yet.
+It runs inside a render, so keep it short. It may not call `browser()`: nothing is in the browser yet.
 
 While `mount()` waits (a query, a request), the component and its parents are not on screen, and
 nothing else of the page is sent until it returns. For slow data, render a placeholder and load

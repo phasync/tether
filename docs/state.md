@@ -115,7 +115,7 @@ gives it back when the statement is done:
   other tabs carry on (measured: two 1 s queries in two coroutines take 1 s, not 2). Without
   phasync-ext, and always for SQLite (a file, no socket) and PostgreSQL (libpq), a query blocks
   the whole worker while it runs: keep those short (indexes).
-- A transaction holds its connection while it waits: don't wait for anything slow (`js()`, a
+- A transaction holds its connection while it waits: don't wait for anything slow (a call to the browser, a
   subscription, a user) inside one.
 
 ## State that outlives the tab

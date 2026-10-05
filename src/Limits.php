@@ -10,23 +10,33 @@ namespace Tether;
  * refills at $eventsPerSecond up to $burst. An empty bucket is abuse: the connection closes
  * with 4429. More than $running handlers running at once in a tab is an overrun: that event is
  * refused (with an error reply when the browser waits for one), and the connection stays.
+ *
+ * The server's calls into the browser are limited too: $calls outstanding at once, $handles
+ * objects held, and each call waits $callTimeout seconds for its answer unless
+ * Browser::within() says otherwise.
  */
 final readonly class Limits
 {
     /**
-     * @param int $eventsPerSecond tokens added to the bucket each second
-     * @param int $burst           the bucket's size
-     * @param int $running         event handlers running or waiting to run in a tab, at most
-     * @param int $bytes           the largest message the client sends (it drops larger ones)
+     * @param int   $eventsPerSecond tokens added to the bucket each second
+     * @param int   $burst           the bucket's size
+     * @param int   $running         event handlers running or waiting to run in a tab, at most
+     * @param int   $bytes           the largest message the client sends (it drops larger ones)
+     * @param int   $calls           calls into the browser outstanding in a tab, at most
+     * @param int   $handles         browser objects a tab holds as JsObjects, at most
+     * @param float $callTimeout     seconds a call into the browser waits for its answer
      */
     public function __construct(
         public int $eventsPerSecond = 200,
         public int $burst = 400,
         public int $running = 64,
         public int $bytes = 524288,
+        public int $calls = 32,
+        public int $handles = 4096,
+        public float $callTimeout = 10.0,
     ) {
-        if ($eventsPerSecond < 1 || $burst < 1 || $running < 1 || $bytes < 1) {
-            throw new \InvalidArgumentException('Every Limits value must be at least 1');
+        if ($eventsPerSecond < 1 || $burst < 1 || $running < 1 || $bytes < 1 || $calls < 1 || $handles < 1 || $callTimeout <= 0) {
+            throw new \InvalidArgumentException('Every Limits value must be at least 1 (callTimeout above 0)');
         }
     }
 }
