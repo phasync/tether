@@ -3,6 +3,7 @@
 // Tether with no framework: a PSR-15 handler with a tiny router; each live page is one Tether::from() call
 // vendor/bin/swerve --ext swerve.php
 use phasync\Psr\Response;
+use Plain\Boost;
 use Plain\Chat;
 use Plain\Counter;
 use Plain\Form;
@@ -17,6 +18,12 @@ return new class implements RequestHandlerInterface {
         $path = $request->getUri()->getPath();
         if ('/' === $path) {
             return Tether::from($request, fn (Tether $t) => $t->mount(Counter::class, ['count' => (int) ($request->getQueryParams()['start'] ?? 0)], 'Counter'));
+        }
+        if (preg_match('#^/boost/([ab])$#', $path, $page)) {
+            return Tether::from($request, fn (Tether $t) => $t->mount(Boost::class, ['page' => $page[1]], "Boost {$page[1]}"));
+        }
+        if ('/plain.html' === $path) {
+            return new Response(200, ['Content-Type' => 'text/html'], '<!doctype html><title>Plain</title><p id="plain">Not a Tether page</p>');
         }
         if ('/form' === $path) {
             return Tether::from($request, fn (Tether $t) => $t->mount(Form::class, [], 'Form'));

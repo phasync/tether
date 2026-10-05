@@ -19,10 +19,11 @@ modifier or a contradiction (`passive` with `prevent`) is a `console.error` in t
 | `tether-ignore` | any element | a render never touches the element, its attributes or its content | [tether-ignore](events-and-javascript.md#tether-ignore-elements-the-browser-owns) |
 | `tether-keep="class style"` | any element | attributes a render never overwrites once the element is on the page | [Components](components.md#render) |
 | `tether-reload` | an `<a>` | below an [App](apps.md), follow the link with a full page load | [Apps](apps.md) |
+| `tether-boost` | an `<a>`, or an element above links | on a `from()` page, follow the links inside without a reload (`="off"` turns it off below) | [Navigation](running.md#navigation-without-a-reload) |
 | `tether-id` | the root of a component | set by Tether, not by you: the component's id in the tab | [Components](components.md#render) |
 
 Set by Tether on `<html>`, for your styles: `tether-live` while connected, `tether-offline`
-while a lost connection is being restored, `tether-crashed` after the server crashed the tab.
+while a lost connection is being restored, `tether-crashed` after the server crashed the tab, and `tether-navigating` while a boosted link is being fetched.
 The document gets the DOM events `tetherconnection` and, on the element, `tetherrefused`
 ([Events](events-and-javascript.md#how-events-leave-the-browser)).
 

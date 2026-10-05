@@ -47,8 +47,8 @@ what.
 | `IJSObjectReference`, `import` | `Tether\JsObject`, `$this->browser()->import($url)` |
 | `[JSInvokable]`, `DotNetObjectReference` | `#[Invokable]` on a handler, `Tether.invoke()` or `this.invoke()` in a hook |
 | `JSException` | `Tether\JsException` and its subclasses |
-| `NavigationManager.NavigateTo` | `$this->navigate($url)`: a page change inside an [App](apps.md), a full load for any other URL |
-| `Router`, link interception | an [App](apps.md) with routes; a `from()` page changes page with a full load |
+| `NavigationManager.NavigateTo` | `$this->navigate($url)`: a page change inside an [App](apps.md), a full load for any other URL (also from a `from()` page) |
+| `Router`, link interception | an [App](apps.md) with routes keeps the circuit across pages; on a `from()` page [`tether-boost`](running.md#navigation-without-a-reload) fetches and morphs the next page without a reload, but with no continuity: the new page opens its own connection and its state starts over |
 | Reconnect UI (`components-reconnect-*`) | `tether-offline` and `tether-crashed` on `<html>`, the `tetherconnection` event, `Tether.reconnect()` |
 | Hub message size limit | `Limits::$bytes`; more limits in `Tether\Limits` |
 | bUnit | `Tether\Testing\Tab` ([Testing](testing.md)) |

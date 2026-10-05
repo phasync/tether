@@ -212,9 +212,38 @@ A live tab runs after its upgrade request was answered, outside mini's handling 
 open (see [State](state.md)). Without `enter`, `$this->request()` in a component still gives the
 request; only the ambient state is missing.
 
+## Navigation without a reload
+
+By default a link on a `from()` page is a full page load. `tether-boost` on a link, or on any
+element above links (`<body>`, `<nav>`), makes the links inside fetch the next page and morph it
+into the current one: the scripts, styles and fonts stay loaded, there is no white flash, and the
+URL and the title change. `tether-boost="off"` on a link or an element turns it off again below.
+
+```html
+<body tether-boost>
+  <a href="/chat/dev">Dev</a>
+  <a href="/files/export" tether-boost="off">Export</a>
+```
+
+The new page opens its own live connection and the old one is closed: **there is no continuity**,
+the new page's components start from their props and nothing is carried over (an App is the way
+to keep state across pages). Back and forward go the same way, and restore the scroll position.
+
+- Only a plain left click on a same-origin `http(s)` link, with no `target` other than `_self`,
+  no `download`, no `tether-click`, and not a `#fragment` of the page you are on. Everything else
+  is the browser's.
+- A response that is not a Tether page (an error, a redirect off the site, plain HTML, a page of
+  an App) is loaded the usual way, as is a failed request.
+- Only the title and the `<body>` are taken from the next page. Scripts and styles in `<head>` are
+  not run again, and scripts in the body are not run: the layout's head must be the same on every
+  boosted page.
+- A newer click cancels a navigation still being fetched. While one is, `<html>` has
+  `tether-navigating`, for a progress bar: `html[tether-navigating] body { cursor: progress }`.
+- `tetherboost` is fired on `window` after the swap, with `detail.url`.
+
 ## Pages with navigation, and the middleware
 
-Two older ways. The middleware is deprecated and goes at 1.0; an App stays until `from()` pages can navigate over the open connection.
+Two older ways. The middleware is deprecated and goes at 1.0. An App stays: it is the only way to keep the connection, and the state, across pages.
 
 - **An App** ([Apps and navigation](apps.md)): a class with routes to live pages, and
   navigation between them over the open connection, so the layout, a call or a half-typed

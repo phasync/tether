@@ -43,6 +43,8 @@
 //   connection has lasted 5 s. A connection the server refuses (close code 1008) reloads a page
 //   of the middleware or an App (from before a deploy), and leaves a Tether::from() page static,
 //   with tether-offline set.
+// - Boost (a Tether::from() page): a click on a link below tether-boost fetches the page and morphs its
+//   body into this one, then connects as a new tab: no continuity. Anything else is a full load.
 // - A Tether::from() page has no tether-mount element: its live connection is the URL it was
 //   rendered for, taken once at start, and the server's closure says what to mount.
 // - Tether.debug = true (or ?tether-debug, or localStorage.tetherDebug) logs why events are
@@ -52,7 +54,7 @@
   const tag = document.getElementById('tether-mount');
   const mount = tag && JSON.parse(tag.textContent); // null: a Tether::from() page
   const app = !!mount && 'base' in mount; // an App's page: navigation goes over the connection
-  const liveUrl = mount ? mount.live : location.pathname + location.search;
+  let liveUrl = mount ? mount.live : location.pathname + location.search; // a boosted page sets it again
   const here = () => location.pathname + location.search;
   const hooks = {};
   const instances = new Map(); // element => hook instance, while live
@@ -95,6 +97,29 @@
     document.dispatchEvent(new CustomEvent('tetherconnection', { detail: { state: name, attempt, ...detail } }));
   }
 
+  // The connection is over: what lived on it goes, as when the page unloads
+  function release() {
+    clearTimeout(settled);
+    live = false;
+    rendered = new WeakMap();
+    discardPaced();
+    for (const [element, instance] of instances) {
+      instances.delete(element);
+      call(() => instance.destroyed?.());
+    }
+    for (const [id, promise] of waiting) {
+      waiting.delete(id);
+      clearTimeout(promise.timer);
+      promise.reject(new Error('The connection to the server closed'));
+    }
+    for (const id of handles.keys()) {
+      if (id > 1) {
+        handleIds.delete(handles.get(id).obj);
+        handles.delete(id);
+      }
+    }
+  }
+
   function connect() {
     retry = 0;
     socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${liveUrl}`);
@@ -111,28 +136,10 @@
       }
     };
     socket.onclose = (event) => {
-      clearTimeout(settled);
-      live = false;
-      rendered = new WeakMap();
-      discardPaced();
+      release();
       if (event.code === 1008 && mount) {
         location.reload();
         return;
-      }
-      for (const [element, instance] of instances) {
-        instances.delete(element);
-        call(() => instance.destroyed?.());
-      }
-      for (const [id, promise] of waiting) {
-        waiting.delete(id);
-        clearTimeout(promise.timer);
-        promise.reject(new Error('The connection to the server closed'));
-      }
-      for (const id of handles.keys()) {
-        if (id > 1) {
-          handleIds.delete(handles.get(id).obj);
-          handles.delete(id);
-        }
       }
       const crashed = event.code === 1011;
       if (crashed) {
@@ -728,7 +735,7 @@
 
   // ---- BIND: tether-* attributes into bindings ---------------------------------------------
   const ALIASES = new Set(['click', 'input', 'change', 'submit', 'keydown']);
-  const RESERVED = new Set(['id', 'owner', 'hook', 'ref', 'ignore', 'reload', 'keep', 'args', 'event', 'bind', 'mount', 'offline']);
+  const RESERVED = new Set(['id', 'owner', 'hook', 'ref', 'ignore', 'reload', 'keep', 'args', 'event', 'bind', 'mount', 'offline', 'boost']);
   const FLAGS = new Set(['prevent', 'passive', 'once', 'self', 'capture', 'window', 'document', 'outside', 'norepeat', 'stop', 'nofield', 'held',
     'shift', 'ctrl', 'alt', 'meta', 'mod', 'mouse', 'pen', 'touch', 'left', 'middle', 'right', 'latest', 'send', 'serial', 'drop']);
   const KEY_ALIASES = { space: ' ', plus: '+', minus: '-', dot: '.', comma: ',', slash: '/', equals: '=' };
@@ -1310,8 +1317,82 @@
     event.preventDefault();
     navigate(url.pathname + url.search, true);
   });
+
+  // ---- Boost: a Tether::from() page's links, without a reload ---------------------------------
+  // The target page is fetched and morphed into this one, and opens its own live connection:
+  // the old tab ends, there is no continuity. Whatever is not a Tether page is loaded the usual way.
+  let shown = here(); // the URL the page on screen was rendered for
+  let fetching = null; // AbortController of the navigation in flight
+  async function boost(target, push) {
+    fetching?.abort();
+    const controller = fetching = new AbortController();
+    const html = document.documentElement;
+    html.setAttribute('tether-navigating', '');
+    try {
+      const response = await fetch(target, { headers: { Accept: 'text/html' }, credentials: 'same-origin', signal: controller.signal });
+      const final = new URL(response.url);
+      const doc = response.ok && final.origin === location.origin && /^text\/html\b/.test(response.headers.get('Content-Type') ?? '')
+        ? new DOMParser().parseFromString(await response.text(), 'text/html')
+        : null;
+      if (!doc || ![...doc.scripts].some((script) => 'tether' in script.dataset) || doc.getElementById('tether-mount')) {
+        throw new Error('not a Tether page');
+      }
+      final.hash = target.hash;
+      const was = scrollY;
+      release();
+      clearTimeout(retry);
+      socket.onopen = socket.onmessage = socket.onclose = null;
+      socket.close();
+      for (const name of ['tether-live', 'tether-offline', 'tether-crashed']) {
+        html.removeAttribute(name);
+      }
+      backoff = 250;
+      attempt = 0;
+      document.title = doc.title;
+      Idiomorph.morph(document.body, doc.body, { morphStyle: 'outerHTML' });
+      if (push) {
+        history.replaceState({ boost: true, y: was }, '');
+        history.pushState({ boost: true }, '', final);
+      }
+      const y = push ? 0 : history.state.y ?? 0;
+      const anchor = push && final.hash && document.getElementById(decodeURIComponent(final.hash.slice(1)));
+      anchor ? anchor.scrollIntoView() : window.scrollTo(0, y);
+      liveUrl = shown = here();
+      boot();
+      window.dispatchEvent(new CustomEvent('tetherboost', { detail: { url: final.href } }));
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        push ? location.assign(target) : location.reload();
+      }
+    } finally {
+      if (fetching === controller) {
+        fetching = null;
+        html.removeAttribute('tether-navigating');
+      }
+    }
+  }
+  // tether-boost on a link or an ancestor turns it on below; tether-boost="off" turns it off again
+  const boosting = (link) => { const on = link.closest('[tether-boost]'); return !!on && on.getAttribute('tether-boost') !== 'off'; };
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest?.('a[href]');
+    if (mount || !link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+      || link.hasAttribute('download') || (bindings.get(link)?.list ?? []).some((b) => b.type === 'click')
+      || (link.target && link.target !== '_self') || !boosting(link)) {
+      return;
+    }
+    const url = new URL(link.href, location.href);
+    if (!/^https?:$/.test(url.protocol) || url.origin !== location.origin || (url.pathname + url.search === here() && url.hash)) {
+      return;
+    }
+    event.preventDefault();
+    boost(url, true);
+  });
   window.addEventListener('popstate', () => {
-    if (app && live) {
+    if (!mount && history.state?.boost) {
+      if (here() !== shown) {
+        boost(new URL(location.href), false);
+      }
+    } else if (app && live) {
       navigate(here(), false);
     } else if (app) {
       location.reload();
@@ -1351,8 +1432,11 @@
     })(),
   };
 
-  for (const el of document.querySelectorAll('[tether-id], [tether-id] *')) {
-    rendered.set(el, attrs(el));
+  function boot() {
+    for (const el of document.querySelectorAll('[tether-id], [tether-id] *')) {
+      rendered.set(el, attrs(el));
+    }
+    connect();
   }
-  connect();
+  boot();
 })();

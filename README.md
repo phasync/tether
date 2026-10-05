@@ -66,7 +66,8 @@ page: [Running Tether](docs/running.md#quickstart).
   client gets fewer frames, never a backlog.
 - **Apps**: for sites with several live pages, routes and navigation between them over the open
   connection: the layout, a call, a half-typed message survive moving between pages
-  ([Apps](docs/apps.md)).
+  ([Apps](docs/apps.md)). On a `from()` page, `tether-boost` on a link or its ancestor changes page
+  without a reload (fetch and morph, a new connection: [Navigation](docs/running.md#navigation-without-a-reload)).
 - **Many users**: swerve's publish/subscribe carries messages between tabs and workers
   ([State](docs/state.md)).
 - **Failures** are contained by error boundaries; without one, the tab starts over
