@@ -93,8 +93,8 @@ has `dev-main`):
 ]
 ```
 
-phasync ships an extension that makes blocking PHP calls (`sleep()`, reads and writes on PHP
-streams, queries through mysqlnd) give way to other coroutines, and lifts the connection limit
+phasync ships an extension that makes blocking PHP calls (reads and writes on PHP streams,
+queries through mysqlnd) give way to other coroutines, and lifts the connection limit
 of a worker; see [swerve's production guide](https://github.com/phasync/swerve/blob/main/docs/production.md#sizing).
 Enable it with `"extra": {"phasync": {"ext": true}}` in your composer.json, or start swerve
 with `--ext` (swerve stops if it cannot load). Tether behaves the same with and without it, as
