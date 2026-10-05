@@ -255,6 +255,17 @@ test('a render that gives the HTML the browser has sends no patch', function () 
     });
 });
 
+test('an event of a form field gets its patch even when the HTML is the one the browser has: that is what resets the field', function (string $type, bool $shipped) {
+    Tab::mount(TabQuiet::class, [], function (Tab $tab) use ($type, $shipped) {
+        $before = count($tab->frames);
+        $tab->call('touch', payload: ['type' => $type]);
+        expect(count($tab->frames))->toBe($before + ($shipped ? 1 : 0));
+        if ($shipped) {
+            expect($tab->frames[$before]['patches'][0]['html'])->toBe($tab->html());
+        }
+    });
+})->with([['click', false], ['mouseenter', false], ['input', true], ['change', true], ['submit', true], ['keydown', true], ['keyup', true]]);
+
 test('a handler marked NoRender does not render the component', function () {
     Tab::mount(TabQuiet::class, [], function (Tab $tab) {
         $before = count($tab->frames);

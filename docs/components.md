@@ -257,7 +257,9 @@ request, runs until it ends or the tab closes, and its failures are only logged.
 
 Event handlers render their component by themselves when they return. Anywhere else (in
 `run()`, in a coroutine, in a callback) call `$this->requestRender()` after changing state.
-A render that gives the HTML the browser already has sends nothing. A handler that changes nothing
+A render that gives the HTML the browser already has sends nothing, except after an event of a
+form field (input, change, submit, key events): the field may hold what the handler did not accept,
+and the patch resets it. A handler that changes nothing
 the page shows can skip the render with `#[Tether\NoRender]`; the component still renders
 when anything else marks it.
 

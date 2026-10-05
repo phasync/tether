@@ -32,7 +32,7 @@ final class Node
 
     public ?Browser $browser = null;
 
-    /** @var \SplQueue<array{0: string, 1: array, 2: ?int, 3: bool}> events for the component's inbox: method, arguments, reply id, whether the reply carries the return value */
+    /** @var \SplQueue<array{0: string, 1: array, 2: ?int, 3: bool, 4: bool}> events for the component's inbox: method, arguments, reply id, whether the reply carries the return value */
     public \SplQueue $events;
 
     /** @var \WeakMap<\Fiber, true> the component's coroutines: its inbox, run(), handlers, go() */

@@ -70,6 +70,12 @@ final class Circuit
     /** Whether a component rendered in the patch under way gave other HTML than it did before */
     private bool $changed = false;
 
+    /** @var array<string, true> components whose event came from a form field: their patch goes out even when equal */
+    private array $reconcile = [];
+
+    /** Event types the browser's page-side state follows: what the user typed may differ from the HTML */
+    private const FIELD_EVENTS = ['input', 'change', 'submit', 'keydown', 'keyup', 'keypress'];
+
     private ?Node $root = null;
 
     /** @var list<array> replies to the browser's calls for the next frame */
@@ -322,7 +328,7 @@ final class Circuit
         }
         ++$this->running;
         ++$node->pending;
-        $node->events->enqueue([$method, $args, $reply, $value]);
+        $node->events->enqueue([$method, $args, $reply, $value, \in_array($payload['type'] ?? null, self::FIELD_EVENTS, true)]);
         \phasync::raiseFlag($node);
     }
 
@@ -495,10 +501,11 @@ final class Circuit
         \usort($marked, fn ($a, $b) => $this->nodes[$a]->depth <=> $this->nodes[$b]->depth);
         foreach ($marked as $id) {
             // Rendered with its parent already, or unmounted meanwhile
-            if (isset($this->dirty[$id], $this->nodes[$id]) && null !== ($patch = $this->patch($this->nodes[$id])) && $this->changed) {
+            if (isset($this->dirty[$id], $this->nodes[$id]) && null !== ($patch = $this->patch($this->nodes[$id])) && ($this->changed || isset($this->reconcile[$id]))) {
                 $frame['patches'][] = $patch;
             }
         }
+        $this->reconcile = [];
         if ($this->remote->rel) {
             $frame['rel'] = \array_map(null, \array_keys($this->remote->rel), $this->remote->rel);
             $this->remote->rel = [];
@@ -668,8 +675,8 @@ final class Circuit
         }
         while (true) {
             while (!$node->events->isEmpty()) {
-                [$method, $args, $reply, $carry] = $node->events->dequeue();
-                $this->start($node, function () use ($node, $method, $args, $reply, $carry) {
+                [$method, $args, $reply, $carry, $field] = $node->events->dequeue();
+                $this->start($node, function () use ($node, $method, $args, $reply, $carry, $field) {
                     try {
                         $value = $node->component->$method(...$args);
                         if (null !== $reply) {
@@ -695,6 +702,8 @@ final class Circuit
                     if ((new \ReflectionMethod($node->component, $method))->getAttributes(NoRender::class)) {
                         \phasync::raiseFlag($this->flushed);
                     } else {
+                        // The browser's field may hold what the handler did not accept: the patch resets it
+                        $field && $this->reconcile[$node->component->tetherId] = true;
                         $this->requestRender($node->component);
                     }
                 });
