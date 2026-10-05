@@ -81,7 +81,7 @@ final class Circuit
     /** @var list<array{0: string, 1: bool}> URLs to navigate to, and whether it is a new history entry */
     private array $navigations = [];
 
-    /** @var list<array{m: string}> events refused without a reply to carry it, for the next frame */
+    /** @var list<array{m: string, e: string}> events refused without a reply to carry it, for the next frame */
     private array $refused = [];
 
     /** Handlers queued or running, in all the tab's components. */
@@ -270,7 +270,7 @@ final class Circuit
             if (null !== $reply) {
                 $this->reply($reply, error: $e->getMessage());
             } elseif (null !== $node) {
-                $this->refuse($method);
+                $this->refuse($method, $e->getMessage());
             }
             if (null === $node) {
                 return;
@@ -281,7 +281,7 @@ final class Circuit
             if (null !== $reply) {
                 $this->reply($reply, error: 'The tab has too many events running');
             } else {
-                $this->refuse($method);
+                $this->refuse($method, 'The tab has too many events running');
             }
             if (($now = \microtime(true)) - $this->overrunLogged >= 1) {
                 $this->overrunLogged = $now;
@@ -296,9 +296,10 @@ final class Circuit
         \phasync::raiseFlag($node);
     }
 
-    private function refuse(string $method): void
+    /** The reason is about the browser's own input (never a handler's exception), so it goes along. */
+    private function refuse(string $method, string $reason): void
     {
-        $this->refused[] = ['m' => \substr($method, 0, 64)];
+        $this->refused[] = ['m' => \substr($method, 0, 64), 'e' => \substr($reason, 0, 300)];
         \phasync::raiseFlag($this);
     }
 

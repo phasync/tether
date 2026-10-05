@@ -203,7 +203,10 @@ test('a refused event with no reply to carry it is in the next frame', function 
         attempt(fn () => $c->event('c1', 'typed', ['no'], null, []));
     });
     $refused = array_merge(...array_map(fn ($f) => $f['refused'] ?? [], $r['frames']));
-    expect($refused)->toBe([['m' => 'missing'], ['m' => 'typed']]);
+    expect($refused)->toBe([
+        ['m' => 'missing', 'e' => 'EventSink::missing() is not an event handler'],
+        ['m' => 'typed', 'e' => 'EventSink::typed(): argument $n must be int, not string'],
+    ]);
 });
 
 test('an empty bucket is abuse: the abuse callback is told and the event does not run', function () {
@@ -245,7 +248,7 @@ test('past the running limit an event is refused with an error reply, and the ta
         ->and($replies[4])->toHaveKey('v')
         ->and(EventSink::$peak)->toBe(2)
         ->and($r['crashed'])->toBeNull();
-    expect(array_merge(...array_map(fn ($f) => $f['refused'] ?? [], $r['frames'])))->toBe([['m' => 'slow']]);
+    expect(array_merge(...array_map(fn ($f) => $f['refused'] ?? [], $r['frames'])))->toBe([['m' => 'slow', 'e' => 'The tab has too many events running']]);
 });
 
 test('handlers cancelled by an unmount are counted out of the running limit', function () {

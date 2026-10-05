@@ -96,8 +96,10 @@ try {
   });
 
   await check('a value the property can not take is refused: the page hears it in tetherrefused, the property stays and the field shows it again', async () => {
-    await page.eval(`window.refused = []; document.addEventListener('tetherrefused', (e) => window.refused.push(e.detail.handler)); qty.type = 'text'; qty.value = 'many'; qty.dispatchEvent(new Event('input', {bubbles: true}))`);
+    await page.eval(`window.refused = []; document.addEventListener('tetherrefused', (e) => window.refused.push(e.detail.handler + ': ' + e.detail.message)); qty.type = 'text'; qty.value = 'many'; qty.dispatchEvent(new Event('input', {bubbles: true}))`);
     await page.until(`window.refused.length === 1`);
+    const reason = await page.eval(`window.refused[0]`);
+    if (!/^bound: .*::\$qty: string is not a value it takes$/.test(reason)) throw new Error('reason ' + reason);
     if (await text('#amount') !== '3') throw new Error('amount ' + await text('#amount'));
     if (await page.eval(`qty.value`) !== '3') throw new Error('field ' + await page.eval(`qty.value`));
   });

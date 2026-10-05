@@ -138,7 +138,7 @@ Tether sends `{c, m, a, v}`: `a` is the `tether-args`, `v` what the event reads 
 and the server joins them, so `tether-args` never takes a field's value by accident.
 
 Every refused call is a `console.error` and a `tetherrefused` event on the element (on the
-document for one with no reply), with `detail: {handler, message}`: a page can undo what it
+document for one with no reply), with `detail: {handler, message}`, the message being the reason (`Shop\Form::$qty: string is not a value it takes`; never text from a handler's exception): a page can undo what it
 showed (a `bind()` field already shows the server's value again). `document` also gets `tetherconnection` with `detail: {state, attempt, crashed, retryMs}`; `state`
 is `live` or `offline`, and `<html>` has the attributes `tether-live`, `tether-offline` and, after
 the server crashed the tab, `tether-crashed`. `Tether.reconnect()` connects at once instead of waiting.

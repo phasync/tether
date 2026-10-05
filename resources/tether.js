@@ -206,8 +206,8 @@
       }
     }
     for (const refused of frame.refused ?? []) {
-      console.error('Tether: the call was refused', refused.m);
-      document.dispatchEvent(new CustomEvent('tetherrefused', { detail: { handler: refused.m, message: 'The call was refused' } }));
+      console.error('Tether: the call was refused:', refused.e);
+      document.dispatchEvent(new CustomEvent('tetherrefused', { detail: { handler: refused.m, message: refused.e } }));
     }
     if (frame.t === 'mount') {
       // The whole tree, from a fresh mount: every component's HTML is new
