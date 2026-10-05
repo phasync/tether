@@ -1,47 +1,104 @@
 # Running Tether
 
 Tether runs on the [swerve](https://github.com/phasync/swerve) application server, in any
-PSR-15 application. This page starts with a live page in plain PHP, as `playground/plain` does,
-then sets one up with the [mini](https://github.com/frodeborli/fubber-mini) framework, as the demo
-in `playground/demo` does.
+PSR-15 application. This page starts a live page in a fresh project with no framework, as
+`playground/plain` does, then sets one up with the [mini](https://github.com/frodeborli/fubber-mini)
+framework, as the demo in `playground/demo` does.
 
-## Installing
+## Quickstart: a fresh project
 
-Tether is not on Packagist yet: install it from its repository.
+Tether is not on Packagist yet: install it from its repository. `composer.json`:
 
 ```json
 {
     "require": {
         "php": ">=8.3",
-        "phasync/tether": "@dev",
-        "fubber/mini": "@dev"
+        "phasync/tether": "dev-main",
+        "phasync/swerve": "^0.1.0-beta5"
     },
     "repositories": [
         { "type": "vcs", "url": "https://github.com/phasync/tether" }
     ],
     "autoload": { "psr-4": { "App\\": "src/" } },
-    "minimum-stability": "alpha",
-    "prefer-stable": true
+    "minimum-stability": "beta"
 }
 ```
 
-Working on Tether, swerve or mini at the same time? Use path repositories to the checkouts
-instead, and require `"phasync/swerve": "@dev"` too (a path repository only has `dev-main`):
+`src/Counter.php`, a component:
+
+```php
+<?php
+
+namespace App;
+
+use Tether\Component;
+
+final class Counter extends Component
+{
+    public int $count = 0;
+
+    public function increment(): void
+    {
+        ++$this->count;
+    }
+
+    public function render(): string
+    {
+        return "<main><p>Clicked <b id=\"count\">{$this->count}</b> times <button id=\"inc\" tether-click=\"increment\">+1</button></p></main>";
+    }
+}
+```
+
+`swerve.php`, the application: a PSR-15 handler that answers `/` with a live page and
+everything else with a 404.
+
+```php
+<?php
+
+use App\Counter;
+use phasync\Psr\Response;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Tether\Tether;
+
+return new class implements RequestHandlerInterface {
+    public function handle(ServerRequestInterface $request): ResponseInterface
+    {
+        if ('/' === $request->getUri()->getPath()) {
+            return Tether::from($request, fn (Tether $t) => $t->mount(Counter::class, [], 'Counter'));
+        }
+
+        return new Response(404, [], 'Not found');
+    }
+};
+```
+
+```
+composer install
+vendor/bin/swerve --http=8080 swerve.php
+```
+
+Open http://localhost:8080/ and click the button: `increment()` runs on the server and the
+count changes in the browser. `Tether::from()` is the whole integration, see below.
+
+Working on Tether or swerve at the same time? Use path repositories to the checkouts instead,
+and require `"phasync/swerve": "@dev"` and `"phasync/tether": "@dev"` (a path repository only
+has `dev-main`):
 
 ```json
 "repositories": [
     { "type": "path", "url": "../phasync-tether", "options": { "symlink": true } },
-    { "type": "path", "url": "../swerve", "options": { "symlink": true } },
-    { "type": "path", "url": "../mini-framework", "options": { "symlink": true } }
+    { "type": "path", "url": "../swerve", "options": { "symlink": true } }
 ]
 ```
 
-For production, also use phasync-ext, which ships inside phasync: it makes
-blocking PHP calls (`sleep()`, reads and writes on PHP streams, and so MySQL queries through
-mysqlnd) give way to other coroutines instead of blocking the worker, and lifts the limit of
-about 900 connections per worker. Enable it with `"extra": {"phasync": {"ext": true}}` in your
-composer.json, or start swerve with `--ext` (swerve stops if it cannot load). Tether works without it, identically, as long as components wait with phasync's
-functions (see [Components](components.md#run)).
+phasync ships an extension that makes blocking PHP calls (`sleep()`, reads and writes on PHP
+streams, queries through mysqlnd) give way to other coroutines, and lifts the connection limit
+of a worker; see [swerve's production guide](https://github.com/phasync/swerve/blob/main/docs/production.md#sizing).
+Enable it with `"extra": {"phasync": {"ext": true}}` in your composer.json, or start swerve
+with `--ext` (swerve stops if it cannot load). Tether behaves the same with and without it, as
+long as components wait with phasync's functions (see [Components](components.md#run)).
 
 ## A live page: Tether::from()
 
@@ -98,7 +155,8 @@ Options, after the closure:
 
 ## With mini
 
-The layout of a mini application, plus `swerve.php`:
+Add `"fubber/mini": "@dev"` to `require` (and the checkout of mini as a path repository, until it is
+on Packagist). The layout of a mini application, plus `swerve.php`:
 
 ```
 _routes/chat/_.php        a live page: /chat/{room}, through Tether::from()
@@ -205,33 +263,34 @@ vendor/bin/swerve --http=8080 --public=html swerve.php
 restarts its workers when a PHP file changes; open tabs reconnect and mount again.
 
 A tab's connection stays with the worker that accepted it, and each worker holds its tabs'
-components in memory. Swerve starts one worker per CPU core; they share nothing but what goes
+components in memory. Swerve starts one worker per CPU by default (`--workers`); they share nothing but what goes
 through storage or [publish/subscribe](state.md#many-users-publish-and-subscribe).
 
 Under PHP-FPM or `php -S`, pages render but don't go live: there is no WebSocket. Swerve is the
 server for Tether.
 
-## The demo
+## The playgrounds
 
-```
-cd playground/demo
-composer install
-vendor/bin/swerve --http=8080 --public=html swerve.php
-```
+Each is a Composer project: `composer install`, then `vendor/bin/swerve --http=8080 swerve.php`
+(add `--public=html` or `--public=public` where it has static files).
 
-- `/live/{id}`: the same page, through `Tether::from()` in a mini route.
-- `/`: a single live page, through the middleware: sign-in through the session, a counter, a clock, a todo list with
-  keyed children, a hook talking with the server, an error boundary, and a button that crashes
-  the tab.
-- `/app/`: an App: rooms in one layout, a stand-in for a call that keeps running while you move
-  between rooms, redirects, and an about page with a root of its own.
-- `/interop`: every call from the server into the browser (a canvas, Promises, modules, helpers) and
-  `Tether.invoke` back, one button each.
-- `/fast?rate=50`: a component updating 50 times a second.
-
-`playground/plain` is `Tether::from()` with no framework: a counter at `/` and a chat room at
-`/chat/lobby`, in a `swerve.php` of about 30 lines (`composer install`, then
-`vendor/bin/swerve --http=8080 swerve.php`; sign in at `/login`).
+- `playground/plain`: no framework, the quickstart grown to a counter at `/`, a form at
+  `/form`, and a chat room at `/chat/lobby` behind a sign-in at `/login`.
+- `playground/showcase`: no framework, one page with a card for each kind of event and for
+  JavaScript interop, next to the source that runs it.
+- `playground/slim` (Slim 4) and `playground/laravel` (Laravel and Blade): counters, a todo list
+  and a chat in each framework's routes.
+- `playground/demo` (mini), the largest:
+  - `/live/{id}`: a page through `Tether::from()` in a mini route.
+  - `/`: a single live page through the middleware: sign-in through the session, a counter, a
+    clock, a todo list with keyed children, a hook talking with the server, an error boundary,
+    and a button that crashes the tab.
+  - `/app/`: an App: rooms in one layout, a stand-in for a call that keeps running while you
+    move between rooms, redirects, and an about page with a root of its own.
+  - `/interop`: every call from the server into the browser (a canvas, Promises, modules,
+    helpers) and `Tether.invoke` back, one button each.
+  - `/events`: elements bound to the DOM events Tether handles.
+  - `/fast?rate=50`: a component updating 50 times a second.
 
 ## Production
 
@@ -248,9 +307,10 @@ vendor/bin/swerve --http=8080 --public=html swerve.php
   listed: `origins: ['https://app.example.com']`.
 - **Timeouts**: a live connection is quiet while nothing changes. Proxies that close idle
   connections after a minute make tabs reconnect (and start over): raise their tunnel timeout.
-- **Capacity**: about 150 KB of memory per open tab with a handful of components, and about
-  18,000 frames a second per core. Without phasync-ext, a worker handles about 900 connections
-  (PHP's `stream_select()` limit); with it, memory is the limit.
+- **Capacity**: every open tab is a connection held by a worker, and holds its components in
+  memory. How many connections a worker can have, with and without phasync-ext, and how many
+  workers to run (four times the cores is a start for many long-lived connections), is in
+  [swerve's production guide](https://github.com/phasync/swerve/blob/main/docs/production.md#sizing).
 - **Restarts and deploys**: when a worker drains (a reload, a deploy), its tabs' connections
   end; the tabs reconnect to another worker and mount again. Component state that must survive
   belongs in storage.

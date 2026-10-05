@@ -12,8 +12,8 @@ use Psr\Http\Message\ServerRequestInterface;
  * - mount(): optional; runs once, with the props set, before the first render: load what the
  *   component shows. It runs for the page's first HTML and again when the tab goes live, since
  *   those are two instances; live-only work belongs in run().
- * - render(): exactly one root element; Tether marks it with the component's id. Children are
- *   placed with child().
+ * - render(): HTML that starts with one element, the root; Tether marks it with the component's id
+ *   (nothing before it, not even a comment). Children are placed with child().
  * - run(): optional; runs in a coroutine of its own while the component is on the page, and is
  *   cancelled when it leaves (its parent stops rendering it, or the browser tab closes). Wait
  *   with phasync::sleep() (and phasync::readable() / writable() for streams).
@@ -23,9 +23,11 @@ use Psr\Http\Message\ServerRequestInterface;
  *   it still renders once. After an event handler, the component renders by itself.
  * - propsChanged(): optional; runs when the parent gave it props that differ, before the render.
  * - dispose(): optional; runs once when it leaves the page, after its coroutines were cancelled.
- * - Event handlers: public methods of the component's own class, called from the browser
+ * - Event handlers: public methods of the component's class, also ones it inherits from your own
+ *   base classes and traits (Component's own are not handlers), called from the browser
  *   (`tether-click="increment"`, or a hook's this.invoke()). Anyone can call them with any JSON
  *   arguments: the arguments must match the parameter types, and the handler checks the rest.
+ *   Keep helpers protected or private.
  *   Its return value goes back to the browser's Tether.invoke() when the handler is marked
  *   #[Invokable].
  * - bind(): the attributes of a field that sets a #[Bind] property as the user types.

@@ -135,3 +135,16 @@ test('a component is unmounted after the first HTML of a page: dispose() runs, a
 test('e() escapes for text and attributes', function () {
     expect(Circuit::prerender(LifeParent::class, []))->toContain('&quot;&lt;');
 });
+
+final class LeadingComment extends Component
+{
+    public function render(): string
+    {
+        return "<!-- a comment -->\n<div>x</div>";
+    }
+}
+
+test('a render that does not start with an element names what it started with', function () {
+    expect(fn () => Circuit::prerender(LeadingComment::class, []))
+        ->toThrow(LogicException::class, 'must start with an element, not "<!-- a comment -->\n<div>x</div>"');
+});

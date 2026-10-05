@@ -20,25 +20,9 @@ document, `online`/`offline` on the window: no suffix needed. `intersect` (the e
 leaves the viewport, or its scrolling ancestor) and `elementresize` (its size changes) are made
 by observers.
 
-| Modifier | Meaning |
-|---|---|
-| `prevent` / `passive` | always / never call `preventDefault()`. Without either: a click on a link, a submit, a drop and a key matched by `key-`/`code-` are prevented, but only when the handler is not empty |
-| `stop` | this binding handles it and nothing further out does. `tether-click.stop=""`, with no handler, sends nothing and prevents nothing: a link or checkbox inside a clickable row |
-| `self` | only when the event's target is this element |
-| `once` | the first time only |
-| `capture` | also fires when an inner binding handles the event, outermost first |
-| `window` / `document` | listen there instead of on the element |
-| `outside` | the event came from outside the element: close a menu on a click elsewhere |
-| `nofield` | not when the target is an input, a select, a textarea or editable |
-| `held` | only while a mouse button is down |
-| `norepeat` | key events: not the auto-repeat of a held key |
-| `key-<k>` / `code-<c>` | key events: `key` (`key-enter`, `key-k`, `key-escape`) or physical `code` (`code-keyw`); several allowed. `key-space`, `plus`, `minus`, `dot`, `comma`, `slash`, `equals` name the punctuation |
-| `shift` `ctrl` `alt` `meta` `mod` | the modifier keys held (`mod` is Cmd on macOS, Ctrl elsewhere). With `key-`/`code-` filters exactly these, so `key-enter` is Enter alone and `ctrl.key-k` not ctrl+shift+k; without a filter they are required, others ignored |
-| `mouse` `pen` `touch` | the pointer type |
-| `left` `middle` `right` | the button |
-| `latest` `send` `serial` `drop` `throttle-N` `debounce-N` | how events leave the tab (below) |
-| `delay-N` | for events that have an end (`mouseover`/`mouseout`, `focus`/`blur`, `touchstart`/`touchend`, `pointerdown`/`pointerup`): sent only if N ms pass before the end: hover intent, long press |
-| `threshold-P` `margin-N` | `intersect`: percent visible, and pixels of margin |
+The modifiers (`prevent`, `stop`, `once`, `window`, `outside`, `key-enter`, `ctrl`, `mouse`, `left`,
+`throttle-N`, `delay-N`, ...) and every other `tether-*` attribute are in the
+[table of attributes and modifiers](attributes.md).
 
 Invalid modifiers, unknown `tether-*` attributes and contradictions (`passive` with `prevent`)
 are reported with `console.error`.
@@ -181,6 +165,19 @@ the server crashed the tab, `tether-crashed`. `Tether.reconnect()` connects at o
       }
   }
   ```
+- Assign before waiting. Handlers of one component interleave at every wait, so what a handler
+  has not assigned yet, another handler cannot see. Set the state that says "working on it"
+  first, and ask for a render if the user should see it while the handler waits:
+
+  ```php
+  public function ask(string $question): void
+  {
+      $this->question = $question;   // before the wait: a second click sees it
+      $this->answer   = '';
+      $this->requestRender();        // the page shows the question while the answer is on its way
+      $this->answer   = Llm::ask($question);   // waits
+  }
+  ```
 - When it returns, its component renders.
 - `$this->navigate($url, replace: true)` replaces the history entry instead of adding one.
 - Arguments must match the handler's parameter types (`int`, `float`, `string`, `bool`, `array`,
@@ -233,7 +230,8 @@ Tether.hook('Call', {
   and when the connection closes ([JavaScript interop](javascript-interop.md)).
 - The server calls the hook's methods, and reads its properties, with `$this->browser()->hook('Call')`;
   it waits for an `async mounted()`.
-- Register hooks before the tab goes live: in a script loaded with `defer` in the page's head.
+- Register hooks in a script loaded with `defer` in the page's head, so they exist when the tab
+  goes live. A hook registered later attaches to the elements already on the page at that moment.
 - A hook's `mounted()` is also how JavaScript (and a browser test) knows the tab is live.
   While a lost connection is being restored, `<html>` has the attribute `tether-offline`; it is
   not set before the first connection.

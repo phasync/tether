@@ -5,7 +5,8 @@ can send whatever the protocol allows. This is what it allows, and what is up to
 
 ## Handlers are public endpoints
 
-Every public method of a component's own class is an event handler, callable by the browser
+Every public method of a component's class, inherited ones from your own base classes and
+traits included, is an event handler, callable by the browser
 with any JSON arguments that match its parameter types, whether or not the page shows a button
 for it. Treat each like a POST route:
 
@@ -16,14 +17,21 @@ for it. Treat each like a POST route:
 - What a handler returns reaches the browser only when it is marked `#[Tether\Invokable]`
   (`Tether.invoke()`); that is the list of handlers whose results you have decided are public.
 - `bind()` makes only `#[Bind]` properties settable, cast to their type; every other property is out of reach.
-- Keep everything else `private` or `protected`. Methods of `Component` itself (`render`,
-  `mount`, `run`, `browser`, ...) and an error boundary's `catch()` are never callable.
+- Keep everything else `private` or `protected`, helpers in a base class too. Methods of
+  `Component` itself (`render`, `mount`, `run`, `browser`, ...) and an error boundary's
+  `catch()` are never callable; `bound()` is, and sets only `#[Bind]` properties.
 
 ## Escaping
 
 `render()` returns HTML. Everything that comes from users, the database or other services must
 be escaped: `$this->e($value)` (`htmlspecialchars()`) in text and in quoted attribute values. Never put user
 input into `tether-*` attributes, `<script>`, `style` or URLs without checking it.
+
+HTML that users write (a rich-text field, Markdown) is sanitized with an allowlist of tags and
+attributes that leaves out every `tether-*` attribute. Without that, a visitor can put
+`tether-click="deleteAccount"` in a message and make the button call a handler of the component
+it lands in, in every tab that shows it. Wrapping the HTML in `tether-ignore` does not help: the
+bindings inside it are read when the element is added.
 
 ## Navigation
 
@@ -74,8 +82,8 @@ let through; they have no cookies of your visitors.
 
 ## Calling the browser
 
-`$this->browser()` runs only what the server sends: function paths, code for `executeString()`
-and module URLs are yours, never taken from input; arguments go in as data, and
+`$this->browser()` runs only what the server sends: function paths and method names for `call()`,
+code for `executeString()` and module URLs are yours, **never taken from input**; arguments go in as data, and
 `executeString()` binds them as parameters. What the browser answers is data to check, like any
 input; its errors carry the JavaScript error's name, message and stack
 (`JsException`): don't show them to other users. The page registers nothing to expose: the server can reach `window` and `document` of the tabs it serves, so the server is the trust boundary

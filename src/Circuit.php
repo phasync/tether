@@ -732,9 +732,9 @@ final class Circuit
         $node->placed    = [];
         try {
             $html = \trim($node->component->render());
-            // Exactly one root element, which gets the component's id
+            // The first element is the root, and gets the component's id
             if (!\preg_match('/^<([a-zA-Z][a-zA-Z0-9-]*)/', $html, $m)) {
-                throw new \LogicException($node->component::class . '::render() must return exactly one root element');
+                throw new \LogicException($node->component::class . '::render() must start with an element, not "' . self::printable($html) . '"');
             }
         } catch (CancelledException|RenderFailure $e) {
             throw $e;
@@ -822,8 +822,8 @@ final class Circuit
     }
 
     /**
-     * Whether the browser may call $method: a public method of the component's own class, none
-     * of Component's or ErrorBoundary's (but bound()).
+     * Whether the browser may call $method: a public method of the component's class (inherited
+     * from your own classes and traits too), none of Component's or ErrorBoundary's (but bound()).
      */
     public static function isHandler(Component $component, string $method): bool
     {
@@ -842,7 +842,7 @@ final class Circuit
     }
 
     /**
-     * The browser may call $method with $args: a public method of the component's own class
+     * The browser may call $method with $args: a public method of the component's class
      * (none of Component's or ErrorBoundary's), and arguments of its parameters' types. A last
      * parameter typed EventArgs (or a subclass) is not one of them: it gets $payload.
      *

@@ -38,15 +38,13 @@ With mini, a route file for the form to post to:
 
 use mini\Http\Message\Response;
 
-return function () {
-    $name = trim((string) ($_POST['name'] ?? ''));
-    if ('' === $name || mb_strlen($name) > 30) {
-        return new Response('', ['Location' => '/login-form?error=1'], 303);
-    }
-    $_SESSION['user'] = $name;
+$name = trim((string) ($_POST['name'] ?? ''));
+if ('' === $name || mb_strlen($name) > 30) {
+    return new Response('', ['Location' => '/login-form?error=1'], 303);
+}
+$_SESSION['user'] = $name;
 
-    return new Response('', ['Location' => '/'], 303);   // body, headers, status
-};
+return new Response('', ['Location' => '/'], 303);   // body, headers, status
 ```
 
 and in components:
@@ -112,7 +110,7 @@ gives it back when the statement is done:
 - The raw `PDO` service is still one per tab, outside the pool: use `mini\db()`.
 - **Whether a query blocks the worker** depends on the driver. MySQL and MariaDB through mysqlnd
   (`pdo_mysql`, `mysqli`) with phasync-ext loaded: a query waits like any I/O, and the worker's
-  other tabs carry on (measured: two 1 s queries in two coroutines take 1 s, not 2). Without
+  other tabs carry on, and two queries in two coroutines overlap. Without
   phasync-ext, and always for SQLite (a file, no socket) and PostgreSQL (libpq), a query blocks
   the whole worker while it runs: keep those short (indexes).
 - A transaction holds its connection while it waits: don't wait for anything slow (a call to the browser, a
@@ -223,6 +221,9 @@ live. Keep presence in storage with a heartbeat (a crashed worker never says goo
 publish changes:
 
 ```php
+use phasync;
+use Swerve\Swerve;
+
 public function run(): void
 {
     $this->go(function () {                                   // the heartbeat
@@ -260,6 +261,7 @@ cooperatively (with or without phasync-ext), and curl's write callback gets the 
 arrives. For an OpenAI-compatible server (a local model, for instance):
 
 ```php
+use phasync;
 use phasync\Services\CurlMulti;
 
 public string $answer = '';

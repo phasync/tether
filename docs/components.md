@@ -55,8 +55,9 @@ final class TodoList extends Component
 
 ## render()
 
-- Returns **exactly one root element**. Tether adds a `tether-id` attribute to it: that is how
-  the browser knows which part of the page is which component.
+- Returns HTML that **starts with one element**, the component's root: nothing before it, not
+  even a comment (`render()` throws, and says what it started with). Tether adds a `tether-id` attribute to it: that is how the browser knows which part of
+  the page is which component.
 - Returns HTML: **escape** everything that comes from users, with `$this->e()` (`htmlspecialchars()` for text and quoted attributes).
 - Is called whenever the component must be shown again; it should only read state. Loading
   data belongs in `mount()`, event handlers or `run()`.
@@ -150,8 +151,9 @@ public function mount(): void
 }
 ```
 
-It runs inside a render, so keep it short. It may not call `browser()`: nothing is in the browser yet.
-`mount()` is synchronous on purpose: the first frame has the data.
+It runs inside a render, so keep it short. `browser()`, `go()` and `navigate()` throw a
+`LogicException` here and in `render()`: nothing is in the browser yet. `mount()` is
+synchronous on purpose: the first frame has the data.
 
 While `mount()` waits (a query, a request), the component and its parents are not on screen, and
 nothing else of the page is sent until it returns. For slow data, render a placeholder and load
@@ -173,6 +175,9 @@ public function run(): void
 Runs in a coroutine of its own while the component is live, and is cancelled when it leaves.
 
 ```php
+use phasync;
+use Tether\Component;
+
 final class Clock extends Component
 {
     public string $time = '';
@@ -193,15 +198,11 @@ final class Clock extends Component
 }
 ```
 
-Wait with phasync's functions: `phasync::sleep()`, `phasync::readable($stream)` and
-`phasync::writable($stream)` before reading or writing a network stream yourself,
-`CurlMulti::await()` for curl. They let the worker's other tabs run meanwhile, with or without
-phasync-ext, and an application that uses them works the same both ways.
-
-phasync-ext makes the rest cooperative too: plain `sleep()`, blocking stream reads, MySQL queries
-through mysqlnd. Without it, those hold up every tab in the worker while they wait: fine for
-a quick query, not for a slow one. Write the application to work without the extension, and
-let the extension make it faster.
+Wait with phasync's functions: `phasync::sleep()`, and `phasync::readable($stream)` or
+`phasync::writable($stream)` before reading or writing a stream yourself. They let the worker's
+other tabs run meanwhile, and they work the same with and without phasync-ext. Plain `sleep()`,
+`usleep()` and blocking reads hold up every tab in the worker; so does a query through a driver
+that blocks. Wait with phasync's functions in everything you write.
 
 Cancellation arrives as a `phasync\CancelledException` at the next wait. Let it pass: catching it
 and carrying on would keep a component running that is no longer on the page. Use `finally`
@@ -230,6 +231,8 @@ A failure in `run()` (an exception it doesn't catch) is the component's: see [Er
 in it is the component's, as for `run()`. Following several topics at once takes one each:
 
 ```php
+use Swerve\Swerve;
+
 public function run(): void
 {
     $this->go(function () {
@@ -291,7 +294,50 @@ rendered again, and the page hears it in `tetherrefused`. Only `#[Bind]` propert
 
 ## Event handlers
 
-Public methods of the component's own class are its event handlers, called from the browser:
-see [Events and JavaScript](events-and-javascript.md). Everything public is callable by anyone
-who has the page, with any arguments of the right types: see [Security](security.md). Keep
-helpers `private`.
+Public methods of the component's class are its event handlers, called from the browser: see
+[Events and JavaScript](events-and-javascript.md). That includes public methods it inherits from
+your own base classes and traits. Component's own public methods are not handlers, except
+`bound()`, which sets `#[Bind]` properties. Everything public is callable by anyone who has the page, with any arguments of the
+right types: see [Security](security.md). Keep helpers `protected` or `private`.
+
+## Templates
+
+`render()` returns a string, so any template engine will do: the core never knows which. The
+rules are the same for all of them.
+
+- The output is raw HTML: escape what users wrote, with the engine's own escaping.
+- It must start with one root element, with nothing before it, not even a template comment.
+- A child is placed by calling `child()`, which is protected: hand the engine a closure.
+- `tether-args` holds JSON: `@json($args)` in Blade (its default flags escape the quotes) or
+  `|json_encode` in Twig, in a single-quoted attribute, since the JSON has double quotes.
+- What the framework keeps per request (the current user, the locale, the container) is the
+  framework's job: see [State](state.md#the-tab-is-a-request). A framework may ship its own
+  base component that wires its engine in.
+
+Blade, as in `playground/laravel`:
+
+```php
+abstract class BladeComponent extends Component
+{
+    public function render(): string
+    {
+        $variables = (fn () => get_object_vars($this))->call($this);
+
+        return view('live.' . Str::kebab(class_basename($this)), $variables + ['component' => $this, 'child' => $this->child(...)])->render();
+    }
+}
+```
+
+```blade
+@use('App\Live\TodoItem')
+<section>
+  @foreach ($items as $id => $text)
+    {!! $child(TodoItem::class, ['text' => $text, 'onRemove' => fn () => $component->remove($id)], key: (string) $id) !!}
+    <button tether-click="react" tether-args='@json([$id, "👍"])'>👍</button>
+  @endforeach
+</section>
+```
+
+With Twig, register the closure as a function:
+`$twig->addFunction(new TwigFunction('child', $this->child(...), ['is_safe' => ['html']]))`, and call
+`{{ child('Item', {text: text}, id) }}`.

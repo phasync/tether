@@ -59,6 +59,8 @@ again with `ref()` where you use it, and don't keep elements across renders.
 `phasync::await()`:
 
 ```php
+use phasync;
+
 $a = $this->browser()->call('fetch', '/a');
 $b = $this->browser()->call('fetch', '/b');
 [$ra, $rb] = [phasync::await($a, 5.0), phasync::await($b, 5.0)];   // JsObjects of the Responses
