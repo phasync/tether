@@ -67,7 +67,7 @@ something other than a page or a redirect, a 404 for example) stops reconnecting
 as it was, with `tether-offline` set. A closure that throws is a failed connection like any
 other, retried with the growing delay; a redirect it returns makes the browser load that URL.
 With the middleware, a refused connection (a page from before a deploy changed its components)
-reloads the page.
+reloads the page, with no limit: workers with different `TETHER_SECRET`s make it reload forever.
 
 On the first render (the HTTP request), a failure is an ordinary exception in the route: your
 framework's error page, a 500. During navigation in an App, a route that throws makes the
