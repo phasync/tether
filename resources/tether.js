@@ -23,12 +23,17 @@
 //   title, or that the browser should load the URL itself (http and https only).
 // - The connection drops (a reload, a restart, the network, a crash): hooks are destroyed, it
 //   reconnects, and the page's components mount again: from their props, or from the URL. The
-//   delay between attempts grows up to 5 s and starts over once a connection has lasted 5 s.
-//   A connection the server refuses (close code 1008: a page from before a deploy) reloads the page.
+//   delay between attempts grows, with jitter, up to 30 s, and starts over once a connection has
+//   lasted 5 s. A connection the server refuses (close code 1008) reloads a page of the middleware
+//   or an App (from before a deploy), and leaves a Tether::from() page static, with tether-offline set.
+// - A Tether::from() page has no tether-mount element: its live connection is the URL it was
+//   rendered for, taken once at start, and the server's closure says what to mount.
 (() => {
   'use strict';
-  const mount = JSON.parse(document.getElementById('tether-mount').textContent);
-  const app = 'base' in mount; // an App's page: navigation goes over the connection
+  const tag = document.getElementById('tether-mount');
+  const mount = tag && JSON.parse(tag.textContent); // null: a Tether::from() page
+  const app = !!mount && 'base' in mount; // an App's page: navigation goes over the connection
+  const liveUrl = mount ? mount.live : location.pathname + location.search;
   const here = () => location.pathname + location.search;
   const hooks = {};
   const instances = new Map(); // element => hook instance, while live
@@ -40,9 +45,9 @@
   let nextReply = 0;
 
   function connect() {
-    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${mount.live}`);
+    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${liveUrl}`);
     socket.onopen = () => {
-      socket.send(JSON.stringify(app ? { u: here() } : mount));
+      socket.send(JSON.stringify(!mount ? {} : app ? { u: here() } : mount));
       settled = setTimeout(() => { backoff = 250; }, 5000);
     };
     socket.onmessage = (message) => {
@@ -93,11 +98,11 @@
     };
     socket.onclose = (event) => {
       clearTimeout(settled);
-      if (event.code === 1008) {
+      live = false;
+      if (event.code === 1008 && mount) {
         location.reload();
         return;
       }
-      live = false;
       document.documentElement.setAttribute('tether-offline', '');
       for (const [element, instance] of instances) {
         instances.delete(element);
@@ -107,8 +112,11 @@
         waiting.delete(id);
         promise.reject(new Error('The connection to the server closed'));
       }
-      setTimeout(connect, backoff);
-      backoff = Math.min(backoff * 2, 5000);
+      if (event.code === 1008) {
+        return;
+      }
+      setTimeout(connect, backoff * (0.5 + Math.random() / 2));
+      backoff = Math.min(backoff * 2, 30000);
     };
   }
 

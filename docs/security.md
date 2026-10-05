@@ -30,9 +30,14 @@ to it: an address that came from a user is an open redirect.
 
 ## Routes are public URLs
 
-An App's routes are URLs anyone can open: check in the route who may see the page (redirect to
-sign-in), and again in the components' handlers. Navigation over the connection runs the same
-route code as a page load.
+A `Tether::from()` page is a URL anyone can open, and so is its live connection. The closure is
+where you decide who may see the page: it runs on every GET **and on every connection, reconnects
+included**, so a redirect to sign-in or a 404 returned from it covers both (a redirect or any
+other response on the connection is acted on by the browser, which loads it). Check again in the
+components' handlers.
+
+An App's routes are the same: the route code runs for a page load and for navigation over the
+connection.
 
 ## Who the tab is
 
@@ -42,9 +47,12 @@ arguments the browser sends.
 
 ## Props through the browser
 
-An App's live tab mounts from its URL, through its route: nothing the browser sends is trusted.
+The live tab of `Tether::from()` and of an App is mounted by running your route or closure again
+for the same URL and cookies: props never go to the browser, so there is nothing to sign, and
+nothing the browser sends is trusted. The tab sees the request as it was when it connected:
+`request()` is a snapshot, and its body is the connection itself, so never read it.
 
-A single live page's root component gets its props from `Tether::page()`. They go to the
+The older `Tether::page()` gives the root component its props differently. They go to the
 browser in the page and come back when the tab connects, **signed** (HMAC-SHA256 with
 `TETHER_SECRET`, at least 32 bytes: a shorter one is an error), so they can't be changed; they can be **read**, and replayed by the same
 visitor. Don't put secrets in them; put ids in them and look things up, with permission checks,
@@ -55,8 +63,10 @@ Children's props never leave the server.
 ## Cross-site connections
 
 A page on another site could open a WebSocket to yours with your visitor's cookies. The live
-endpoint refuses a connection whose `Origin` is not your host (403), unless listed:
-`new Tether(origins: ['https://app.example.com'])`. Non-browser clients send no `Origin` and are
+endpoint refuses a connection whose `Origin` is not the request's host (403), before your
+closure runs; list others with `Tether::from($request, $page, origins: ['https://app.example.com'])`
+(`new Tether(origins: ...)` for the middleware). Behind a proxy, the proxy must pass the original
+`Host` on, or list the public origin. Non-browser clients send no `Origin` and are
 let through; they have no cookies of your visitors.
 
 ## Limits

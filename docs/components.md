@@ -61,6 +61,7 @@ final class TodoList extends Component
 - Is called whenever the component must be shown again; it should only read state. Loading
   data belongs in `mount()`, event handlers or `run()`.
 - `$this->child(Class::class, $props, key: ...)` places a child component and returns its HTML.
+- `$this->request()` is the PSR-7 request of the tab (see [State](state.md#the-tab-is-a-request)).
 
 ## Props and children
 
@@ -95,9 +96,15 @@ public function remove(): void   // an event handler
 }
 ```
 
-The page's root component gets its props from its route's `Page` (an [App](apps.md)), or from
-`Tether::page()`; for `Tether::page()` they must be JSON: they go to the browser and come back,
-signed, when the tab connects.
+The page's root component gets its props from what the route returns: `$t->mount($class, $props)`
+in `Tether::from()`, or the `Page` of an [App](apps.md). They are PHP values of any kind, and
+never leave the server: the live tab runs the route again. (The older `Tether::page()` takes
+JSON props, which go to the browser and come back signed.)
+
+`Tether::from()` writes the page's document itself. To use your own layout, pass `shell:`, a
+closure `fn (string $root, string $scripts, Page $page): string` returning the whole HTML. Put
+`$scripts` in the `<head>`: it is one module script (Tether's client), and modules wait for the
+document, so your own `defer` scripts, which register hooks, run after it.
 
 ## Lifecycle
 

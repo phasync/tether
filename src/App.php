@@ -83,7 +83,7 @@ abstract class App implements RequestHandlerInterface
             return $result;
         }
 
-        return Live::document((new Circuit())->mount($result->class, $result->props), ['live' => "$base/.tether/live", 'base' => $base], $result->title, $this->head(), "$base/.tether");
+        return Live::document((new Circuit(request: $request))->mount($result->class, $result->props), ['live' => "$base/.tether/live", 'base' => $base], $result->title, $this->head(), "$base/.tether");
     }
 
     /** HTML for the head of every page: the application's styles, and its scripts (defer). */
@@ -146,7 +146,7 @@ abstract class App implements RequestHandlerInterface
 
                 return;
             }
-            Live::tab($ws, $page, $resolve);
+            Live::tab($ws, $page, $resolve, $request);
         };
         null === $this->enter ? $tab() : ($this->enter)($request, $tab);
     }

@@ -1,6 +1,7 @@
 # Apps and navigation
 
-An App is a class with routes to live pages. Once a tab is live, moving between the App's pages
+For one live page, use `Tether::from()` ([Running Tether](running.md#a-live-page-tetherfrom)).
+An App is for a site of several live pages: a class with routes to them. Once a tab is live, moving between the App's pages
 goes over the tab's connection instead of loading a new page: the components the pages share
 stay as they are, with their state and their coroutines. A sidebar keeps its scroll position, a
 call keeps going, a half-typed message stays half-typed.

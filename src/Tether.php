@@ -2,6 +2,7 @@
 
 namespace Tether;
 
+use phasync\Psr\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -9,9 +10,20 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Swerve\Http\WebSocket;
 
 /**
- * One live page in an application: Tether::page() as a route's response, and this middleware
- * for the client's files and the live connection. For live pages with navigation between them,
- * see App.
+ * A live page in an application. Tether::from() is the way: one route answers both the page and
+ * its live connection, with nothing else to mount.
+ *
+ *     return Tether::from($request, fn (Tether $t) => $t->mount(Counter::class, ['start' => 3], 'Counter'));
+ *
+ * The closure runs for the page's HTML (a GET) and again for each live connection of the browser
+ * (a WebSocket upgrade of the same URL, with the same cookies, so the same session and route
+ * parameters): it is where the route decides what the page is. The component's props never
+ * leave the server: they may be any PHP values. A live tab starts from what the closure returns
+ * on its connection, so its state is lost when the connection is, and starts over on reconnect.
+ *
+ * The older way, for pages that need the client's files at fixed URLs or live pages with
+ * navigation between them (see App), is Tether::page() as a route's response, and this class as
+ * middleware:
  *
  * - page(): a page whose root is a component, as a response: its HTML rendered once, and the
  *   browser client, which then connects and mounts it live.
@@ -36,8 +48,98 @@ final class Tether implements MiddlewareInterface
      * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter   runs a tab (the closure) as the work of its
      *                                                                              request, after the framework handled it
      */
-    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null)
+    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null, public readonly bool $live = false)
     {
+    }
+
+    /**
+     * The page, and its live connection, at the URL of $request: a GET answers with the page, a
+     * WebSocket upgrade of the same URL (what the page's script opens) with the live tab.
+     * Call it from a route's handler, with the request it was given; nothing else is needed.
+     *
+     * $page runs for the page and for every live connection, reconnects included, inside the
+     * application's handler, so route parameters, authentication and the session apply. It
+     * must give the same answer for the same route, query and session; work that must happen
+     * once checks `$t->live`. It returns a Page (`$t->mount(Counter::class, $props, 'Title')`) or
+     * a response: sent as it is for the page; for a live connection, a redirect sends the
+     * browser there, and any other response (not found, not allowed) leaves the page static.
+     * Anything else is a LogicException.
+     *
+     * A live tab runs after the upgrade was answered, outside the framework's request: resolve
+     * what its components need (the user, ids) in $page and pass it as props, or read it from
+     * Component::request(), a snapshot of the upgrade request with the attributes the framework's
+     * middleware set. $enter makes the request the framework's current one for the tab, as for
+     * the middleware: `enter: RequestDispatcher::within(...)` with mini.
+     *
+     * $shell makes the whole HTML document from the root's HTML, the script block and the Page,
+     * when the application's template owns the page. The script block belongs in the head (it
+     * is a deferred module: the application's defer scripts that call Tether.hook() run after
+     * it); a shell that leaves it out is an error. $nonce is for a Content-Security-Policy that
+     * needs one on inline scripts. $origins: other origins whose pages may open the live
+     * connection, as for the middleware; the Origin must be this host otherwise.
+     *
+     * @param \Closure(Tether): (Page|ResponseInterface)                  $page
+     * @param \Closure(string, string, Page): string|null                 $shell
+     * @param list<string>                                                $origins
+     * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter
+     */
+    public static function from(ServerRequestInterface $request, \Closure $page, ?\Closure $shell = null, array $origins = [], ?\Closure $enter = null, string $nonce = ''): ResponseInterface
+    {
+        $method = $request->getMethod();
+        if ('GET' !== $method && 'HEAD' !== $method) {
+            return new Response(405, ['Content-Type' => 'text/plain', 'Allow' => 'GET, HEAD'], 'Method not allowed');
+        }
+        if ('GET' === $method && 'websocket' === \strtolower($request->getHeaderLine('Upgrade'))) {
+            if (null !== ($refused = Live::refuseOrigin($request, $origins))) {
+                return $refused;
+            }
+            $result = self::answer($page(new self(live: true)));
+            if ($result instanceof Page) {
+                return WebSocket::from($request, static function (WebSocket $ws) use ($request, $result, $enter) {
+                    // The browser's first message, sent on open, is the barrier: the 101 is out and the handler returned
+                    if (null === $ws->receive()) {
+                        return;
+                    }
+                    $tab = static fn () => Live::tab($ws, $result, null, $request);
+                    null === $enter ? $tab() : $enter($request, $tab);
+                });
+            }
+
+            // A browser can not read a failed upgrade's status: accept it, and say what it was
+            return WebSocket::from($request, static function (WebSocket $ws) use ($result) {
+                $location = $result->getHeaderLine('Location');
+                if ($result->getStatusCode() >= 300 && $result->getStatusCode() < 400 && '' !== $location) {
+                    $ws->send(\json_encode(['t' => 'frame', 'nav' => ['load' => $location]], \JSON_THROW_ON_ERROR));
+                } else {
+                    $ws->end(1008);
+                }
+            });
+        }
+        $result = self::answer($page(new self()));
+        if ($result instanceof ResponseInterface) {
+            return $result;
+        }
+        $html = ($shell ?? Live::shell(...))((new Circuit(request: $request))->mount($result->class, $result->props), Live::scripts($nonce), $result);
+        if (!\str_contains($html, 'data-tether')) {
+            throw new \LogicException('The shell must place its $scripts argument in the document: the page is dead without it');
+        }
+
+        return new Response(200, ['Content-Type' => 'text/html; charset=utf-8'], $html);
+    }
+
+    /** A Page for the closure given to from() to return: `$t->mount(Counter::class, $props, 'Title')`. */
+    public function mount(string $class, array $props = [], string $title = '', string $head = ''): Page
+    {
+        return new Page($class, $props, $title, $head);
+    }
+
+    private static function answer(mixed $result): Page|ResponseInterface
+    {
+        if (!$result instanceof Page && !$result instanceof ResponseInterface) {
+            throw new \LogicException('The closure given to Tether::from() must return a Page or a response, not ' . \get_debug_type($result));
+        }
+
+        return $result;
     }
 
     /**
@@ -81,7 +183,7 @@ final class Tether implements MiddlewareInterface
 
             return;
         }
-        $tab = static fn () => Live::tab($ws, new Page($mount['c'], $mount['p']), null);
+        $tab = static fn () => Live::tab($ws, new Page($mount['c'], $mount['p']), null, $request);
         null === $this->enter ? $tab() : ($this->enter)($request, $tab);
     }
 

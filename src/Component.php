@@ -2,6 +2,8 @@
 
 namespace Tether;
 
+use Psr\Http\Message\ServerRequestInterface;
+
 /**
  * A live component: its state is in its properties, render() turns it into HTML, and it lives
  * on the server for as long as it is on the page.
@@ -24,6 +26,7 @@ namespace Tether;
  *   arguments: the arguments must match the parameter types, and the handler checks the rest.
  *   Its return value goes back to a hook's push().
  * - js(): call a function in the browser and get its result.
+ * - request(): the request of the tab: the page's request when it renders, the upgrade when live.
  *
  * A failure in any of them goes to the nearest ErrorBoundary above; with none, the tab starts
  * over.
@@ -106,6 +109,17 @@ abstract class Component
     final protected function go(\Closure $fn): \Fiber
     {
         return $this->circuit->go($this, $fn);
+    }
+
+    /**
+     * The request this tab belongs to: for a live tab, the WebSocket upgrade, as it was when
+     * the tab connected (its cookies, its URL, the attributes the framework's middleware set).
+     * Never read its body: that is the connection. Throws when the tab has no request: a first
+     * render by Tether::page().
+     */
+    final protected function request(): ServerRequestInterface
+    {
+        return $this->circuit->request();
     }
 
     /** @internal */

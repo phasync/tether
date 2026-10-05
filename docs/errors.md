@@ -57,10 +57,16 @@ While disconnected, `<html>` has the attribute `tether-offline`, for a "Reconnec
 html[tether-offline] body::before { content: 'Reconnecting…'; position: fixed; inset: 0 0 auto 0; background: #fd6; text-align: center }
 ```
 
-The browser waits longer after each connection (250 ms, doubling up to 5 s), and starts over
-only when a connection has stayed open for 5 s, so a page that fails right after every mount
-doesn't hammer the server. A connection the server refuses (a page from before a deploy changed
-its components) reloads the page.
+The browser waits longer after each connection (250 ms, doubling up to 30 s, with some
+randomness so that many tabs do not return together), and starts over only when a connection
+has stayed open for 5 s, so a page that fails right after every mount doesn't hammer the server.
+
+A `Tether::from()` page that the server refuses with code 1008 (its closure answered with
+something other than a page or a redirect, a 404 for example) stops reconnecting: the page stays
+as it was, with `tether-offline` set. A closure that throws is a failed connection like any
+other, retried with the growing delay; a redirect it returns makes the browser load that URL.
+With the middleware, a refused connection (a page from before a deploy changed its components)
+reloads the page.
 
 On the first render (the HTTP request), a failure is an ordinary exception in the route: your
 framework's error page, a 500. During navigation in an App, a route that throws makes the

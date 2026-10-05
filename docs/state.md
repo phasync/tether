@@ -8,6 +8,14 @@ the tab (`mount()` once live, handlers, `run()`, `go()`) runs in that request's 
 like any coroutine of a request. With `enter` (see [Running Tether](running.md)), your
 framework makes it the current request.
 
+In a component, `$this->request()` is the PSR-7 request of the tab: the page's request while it
+renders, the upgrade request once live (as it was at connect). It works with any framework, or
+none. `Tether::from()`'s closure gets `$t->live`, true on the connection and false on the page,
+for the rare route that must tell them apart.
+
+A reconnect runs the closure again and mounts the page from scratch: property state is gone, so
+state that must survive belongs in storage or the session (see below).
+
 With mini (`enter: RequestDispatcher::within(...)`):
 
 - `mini\request()`, `$_COOKIE`, and `$_GET` of the upgrade request (not the page's URL: that

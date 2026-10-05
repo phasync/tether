@@ -1,0 +1,31 @@
+{
+    "name": "phasync/tether-playground-plain",
+    "description": "Tether with no framework: a PSR-15 handler with a tiny router on swerve",
+    "type": "project",
+    "require": {
+        "php": ">=8.3",
+        "phasync/tether": "@dev",
+        "phasync/swerve": "^0.1.0-beta5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Plain\\": "src/"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../..",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "minimum-stability": "beta",
+    "prefer-stable": true,
+    "extra": {
+        "phasync": {
+            "ext": true
+        }
+    }
+}

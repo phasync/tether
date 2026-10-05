@@ -25,6 +25,28 @@ final class Counter extends Tether\Component
 That is a live counter: the button calls `increment()` on the server, and the paragraph
 updates in the browser. No JavaScript to write, no API to design.
 
+To put it on a page, a route returns `Tether::from()`. In plain PHP, the whole `swerve.php`:
+
+```php
+use phasync\Psr\Response;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Tether\Tether;
+
+return new class implements RequestHandlerInterface {
+    public function handle(ServerRequestInterface $request): ResponseInterface
+    {
+        return '/' === $request->getUri()->getPath()
+            ? Tether::from($request, fn (Tether $t) => $t->mount(Counter::class, [], 'Counter'))
+            : new Response(404, [], 'Not found');
+    }
+};
+```
+
+`vendor/bin/swerve swerve.php` serves it. One route answers the page and its live connection;
+the closure runs for both, so a redirect or a 404 in it covers both.
+
 - **Components** hold their state in properties, render HTML, nest with keys, and live for as
   long as they are on the page.
 - **Coroutines**: `run()` runs in the background while the component is on the page (a clock,
@@ -32,15 +54,15 @@ updates in the browser. No JavaScript to write, no API to design.
   `$this->go()`; all of it is cancelled when the component leaves.
 - **Rendering** is batched per tab: many changes, one frame, at most 30 frames a second. A slow
   client gets fewer frames, never a backlog.
-- **Apps**: routes to pages, and navigation between them over the open connection: the layout,
-  a call, a half-typed message survive moving between pages.
+- **Apps**: for sites with several live pages, routes and navigation between them over the open
+  connection: the layout, a call, a half-typed message survive moving between pages.
 - **Many users**: swerve's publish/subscribe carries messages between tabs and workers.
 - **JavaScript when you need it**: hooks give elements a JavaScript side (WebRTC, a canvas, an
   editor) that calls handlers, and that the server calls with `js()`.
 - **Failures** are contained by error boundaries; without one, the tab starts over.
-- **Any framework** whose request state follows the request (not process-wide globals): mini
-  and Slim, for example. The tab is a request for as long as it is open, so the framework's
-  session and services work in components.
+- **Any framework**, or none: `Tether::from()` needs only the PSR-7 request. With a framework
+  whose request state follows the request (not process-wide globals), such as mini, the tab is
+  a request for as long as it is open, so its session and services work in components.
 
 > Alpha: the API may still change. Measured on one core: about 18,000 frames a second, and
 > about 150 KB of memory per open tab (Blazor Server: about 250 KB). On a 56-core server,
@@ -64,16 +86,16 @@ and PHP 8.3 or later runs it. You don't have to start there:
 
 ## Documentation
 
-1. [Running Tether](docs/running.md): installing, an App or a single live page, swerve, the
-   demo, production.
+1. [Running Tether](docs/running.md): installing, `Tether::from()`, mini, the middleware and
+   Apps, swerve, the demo, production.
 2. [Components](docs/components.md): props, render(), children, mount(), run(), go(), rendering.
-3. [Apps and navigation](docs/apps.md): routes, pages, layouts that survive navigation.
+3. [Apps and navigation](docs/apps.md): for several live pages: routes, pages, layouts that survive navigation.
 4. [Events and JavaScript](docs/events-and-javascript.md): tether-click and friends, hooks,
    js(), tether-ignore.
 5. [State, sessions and many users](docs/state.md): the tab's request, sign-in, the database,
    publish/subscribe between tabs, presence, streaming from an LLM.
 6. [Errors](docs/errors.md): error boundaries, crashes, logging.
-7. [Security](docs/security.md): what the browser can do, escaping, origins, signed props.
+7. [Security](docs/security.md): what the browser can do, escaping, origins, what the closure checks.
 
 ## Development
 

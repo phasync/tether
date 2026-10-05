@@ -63,6 +63,41 @@ final class Live
     }
 
     /**
+     * The client for a Tether::from() page: one inline module script, idiomorph then tether.js
+     * (modules defer: it is safe in the head, and runs before the application's defer scripts).
+     */
+    public static function scripts(string $nonce): string
+    {
+        static $client = null;
+        $client ??= \file_get_contents(\dirname(__DIR__) . '/resources/idiomorph.min.js') . "\n" . \file_get_contents(\dirname(__DIR__) . '/resources/tether.js');
+        $nonce = '' === $nonce ? '' : ' nonce="' . \htmlspecialchars($nonce) . '"';
+
+        return "<script type=\"module\" data-tether{$nonce}>\n{$client}\n</script>";
+    }
+
+    /** The default document of a Tether::from() page. */
+    public static function shell(string $root, string $scripts, Page $page): string
+    {
+        $title = \htmlspecialchars($page->title);
+
+        return <<<HTML
+            <!doctype html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{$title}</title>
+            {$scripts}
+            {$page->head}
+            </head>
+            <body>
+            {$root}
+            </body>
+            </html>
+            HTML;
+    }
+
+    /**
      * The live endpoint's answer to a page from another site, which could otherwise open a
      * connection with the visitor's cookies: 403. Null when the Origin is this host, one of
      * $origins, or absent (not a browser).
@@ -86,7 +121,7 @@ final class Live
      * @param (\Closure(string): array{0: ?Page, 1: string})|null $resolve a URL's page, or null
      *                                                                     for a full page load; null: every navigation is a full page load
      */
-    public static function tab(WebSocket $ws, Page $page, ?\Closure $resolve): void
+    public static function tab(WebSocket $ws, Page $page, ?\Closure $resolve, ?ServerRequestInterface $request = null): void
     {
         $circuit = new Circuit(
             send: static fn (array $frame) => $ws->send(\json_encode($frame, \JSON_THROW_ON_ERROR)),
@@ -95,6 +130,7 @@ final class Live
                 $ws->end(1011);
             },
             resolve: $resolve,
+            request: $request,
         );
         try {
             if (null === ($html = $circuit->mount($page->class, $page->props))) {

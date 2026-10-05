@@ -94,7 +94,7 @@ to the bottom. A hook gives an element a JavaScript object for as long as the ta
 ```
 
 ```js
-// html/app.js, loaded with Tether::page(..., head: '<script src="/app.js" defer></script>')
+// html/app.js, loaded with $t->mount(..., head: '<script src="/app.js" defer></script>')
 Tether.hook('Call', {
   mounted() {
     // this.el: the element; this.push(method, ...args): call a handler of its component

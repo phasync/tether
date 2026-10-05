@@ -3,6 +3,7 @@
 namespace Tether;
 
 use phasync\CancelledException;
+use Psr\Http\Message\ServerRequestInterface;
 use Swerve\Swerve;
 
 /**
@@ -77,13 +78,20 @@ final class Circuit
      * @param \Closure(\Throwable): void|null $crash  told that the tab crashed
      * @param (\Closure(string): array{0: ?Page, 1: string})|null $resolve the page at a URL, and
      *                                                                     the URL after redirects; no page: a full page load
+     * @param ServerRequestInterface|null     $request the request the tab belongs to, for Component::request()
      */
     public function __construct(
         private readonly ?\Closure $send = null,
         private readonly float $maxFps = 30,
         private readonly ?\Closure $crash = null,
         private readonly ?\Closure $resolve = null,
+        private readonly ?ServerRequestInterface $request = null,
     ) {
+    }
+
+    public function request(): ServerRequestInterface
+    {
+        return $this->request ?? throw new \LogicException('request() needs a tab started by Tether::from(), the middleware or an App');
     }
 
     /**

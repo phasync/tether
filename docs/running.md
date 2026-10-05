@@ -1,8 +1,9 @@
 # Running Tether
 
 Tether runs on the [swerve](https://github.com/phasync/swerve) application server, in any
-PSR-15 application. This page sets one up with the [mini](https://github.com/frodeborli/fubber-mini)
-framework, as the demo in `playground/demo` does, and shows what differs with another framework.
+PSR-15 application. This page starts with a live page in plain PHP, as `playground/plain` does,
+then sets one up with the [mini](https://github.com/frodeborli/fubber-mini) framework, as the demo
+in `playground/demo` does.
 
 ## Installing
 
@@ -42,21 +43,65 @@ about 900 connections per worker. Enable it with `"extra": {"phasync": {"ext": t
 composer.json, or start swerve with `--ext` (swerve stops if it cannot load). Tether works without it, identically, as long as components wait with phasync's
 functions (see [Components](components.md#run)).
 
-## Two ways to use it
+## A live page: Tether::from()
 
-- **An App** ([Apps and navigation](apps.md)): a class with routes to live pages, and
-  navigation between them over the open connection. For an application that is live
-  throughout: a chat, a dashboard, an admin.
-- **A single live page**: a route returns `Tether::page(Root::class, $props, $title, $head)`,
-  and Tether's middleware serves the live connection. For a live part in an otherwise ordinary
-  site; following a link loads the next page as usual.
+A route returns `Tether::from($request, $closure)`. One route answers both the page (a GET) and
+its live connection (the WebSocket upgrade the page's script opens, to the same URL, with the
+same cookies): nothing else to mount, no client files to serve. In plain PHP, `swerve.php` is a
+PSR-15 handler with a tiny router:
+
+```php
+<?php
+
+use phasync\Psr\Response;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Tether\Tether;
+
+return new class implements RequestHandlerInterface {
+    public function handle(ServerRequestInterface $request): ResponseInterface
+    {
+        if (preg_match('#^/chat/(\w+)$#', $request->getUri()->getPath(), $room)) {
+            return Tether::from($request, fn (Tether $t) => $t->mount(Chat::class, ['room' => $room[1]], "#{$room[1]}"));
+        }
+
+        return new Response(404, [], 'Not found');
+    }
+};
+```
+
+The closure runs for the page and again for every live connection, reconnects included, inside
+your handler: route parameters, the session and authentication apply, and it is where a route
+says no. It returns
+
+- `$t->mount(Class::class, $props, $title, $head)`: the page's root component (a `Page`). Props
+  never leave the server, so they can be any PHP values, objects included.
+- a response: for the page it goes out as it is; for a live connection, a redirect sends the
+  browser there (signed out: `new Response(302, ['Location' => '/login'], '')`), and any other
+  (404, 403) leaves the page as rendered, with no live connection and no retries.
+
+A live tab starts from what the closure returns, so a reconnect mounts the components anew:
+their state is gone (see [State](state.md#the-tab-is-a-request)). Work that must happen once, not
+for the page and again for the tab, checks `$t->live`. Only GET and HEAD are answered.
+
+Options, after the closure:
+
+- `shell`: your template makes the whole document. `fn (string $root, string $scripts, Page
+  $page): string` gets the root component's HTML, the script block and the page, and returns
+  HTML. Put `$scripts` in the `<head>`: it is a deferred module, so your `defer` scripts that
+  call `Tether.hook()` run after it. A shell that leaves it out is an error. Without a shell,
+  Tether writes a document with the page's title and `head`.
+- `nonce`: for a Content-Security-Policy that needs one on the inline script.
+- `origins`: other origins whose pages may open the live connection (the Origin must be the
+  host otherwise); `enter`: see below.
 
 ## With mini
 
 The layout of a mini application, plus `swerve.php`:
 
 ```
-_routes/__DEFAULT__.php   the App: every URL not taken by another route file
+_routes/chat/_.php        a live page: /chat/{room}, through Tether::from()
 _routes/login.php         an ordinary route: the sign-in form posts here
 src/                      your components (App\...)
 html/                     public files: index.php for PHP-FPM, your .js and .css
@@ -88,21 +133,40 @@ Write mini's functions with a leading backslash, `\mini\bootstrap()`, `\mini\db(
 with `use mini\Mini;`, PHP resolves `mini\bootstrap()` through that alias (to
 `mini\Mini\bootstrap()`), and in a namespaced class to `YourNamespace\mini\db()`.
 
-`_routes/__DEFAULT__.php` returns the App. mini routes everything below a directory's
-`__DEFAULT__.php` to it (`_routes/chat/__DEFAULT__.php` for an App at `/chat/`):
+`_routes/chat/_.php` is the page for `/chat/{room}` (`$_GET[0]` is the segment):
 
 ```php
 <?php
 
-return new App\Chat(enter: mini\Dispatcher\RequestDispatcher::within(...));
+use mini\Dispatcher\RequestDispatcher;
+use Tether\Tether;
+
+return Tether::from(
+    \mini\request(),
+    fn (Tether $t) => $t->mount(App\Chat::class, ['room' => $_GET[0]], "#{$_GET[0]}"),
+    enter: RequestDispatcher::within(...),
+);
 ```
 
-`enter` makes each live tab the work of its request for mini: `mini\request()`, `$_COOKIE`,
+A live tab runs after its upgrade request was answered, outside mini's handling of it.
+`enter` makes the tab the work of that request for mini: `mini\request()`, `$_COOKIE`,
 `$_SESSION` and mini's Scoped services are the tab's, in every component, for as long as it is
-open (see [State](state.md)).
+open (see [State](state.md)). Without `enter`, `$this->request()` in a component still gives the
+request; only the ambient state is missing.
 
-For single live pages instead, add Tether's middleware in `swerve.php` and return
-`Tether::page()` from route files:
+## Pages with navigation, and the middleware
+
+Two older ways, for what `from()` does not do.
+
+- **An App** ([Apps and navigation](apps.md)): a class with routes to live pages, and
+  navigation between them over the open connection, so the layout, a call or a half-typed
+  message survive moving between pages. Mounted where the framework routes a path and
+  everything below it; with mini, `_routes/__DEFAULT__.php` returns
+  `new App\Chat(enter: mini\Dispatcher\RequestDispatcher::within(...))` (or
+  `_routes/chat/__DEFAULT__.php` for an App at `/chat/`).
+- **The middleware**: `Tether::page(Root::class, $props, $title, $head)` as a route's
+  response, with Tether's middleware serving the client's files and the live connection at
+  `/_tether/`. The props travel through the browser, signed.
 
 ```php
 $dispatcher = Mini::$mini->get(RequestDispatcher::class);
@@ -116,7 +180,8 @@ return $dispatcher;
 
 Anything that gives swerve a PSR-15 request handler works, provided the framework keeps request
 state per request, not in globals shared by the process: swerve runs many requests, and all
-open tabs, concurrently in each worker. Slim, for example:
+open tabs, concurrently in each worker. `Tether::from()` needs only the PSR-7 request the
+route was given. An App is a request handler, so Slim, for example, can route to it:
 
 ```php
 // swerve.php
@@ -154,23 +219,29 @@ composer install
 vendor/bin/swerve --http=8080 --public=html swerve.php
 ```
 
-- `/`: a single live page: sign-in through the session, a counter, a clock, a todo list with
+- `/live/{id}`: the same page, through `Tether::from()` in a mini route.
+- `/`: a single live page, through the middleware: sign-in through the session, a counter, a clock, a todo list with
   keyed children, a hook talking with the server, an error boundary, and a button that crashes
   the tab.
 - `/app/`: an App: rooms in one layout, a stand-in for a call that keeps running while you move
   between rooms, redirects, and an about page with a root of its own.
 - `/fast?rate=50`: a component updating 50 times a second.
 
+`playground/plain` is `Tether::from()` with no framework: a counter at `/` and a chat room at
+`/chat/lobby`, in a `swerve.php` of about 30 lines (`composer install`, then
+`vendor/bin/swerve --http=8080 swerve.php`; sign in at `/login`).
+
 ## Production
 
-- **Secret**: a single live page's props travel through the browser, signed. Set
+- **Secret** (`Tether::page()` and the middleware; `from()` has none, its props stay on the
+  server): the props travel through the browser, signed. Set
   `TETHER_SECRET` (a random string of at least 32 bytes) in the environment of every server;
   without it, each machine makes a key of its own in the temporary directory (private to its
   user), which is fine on one machine only. Pages open when the secret changes, or the key file is
   deleted, are refused when they connect. A key shorter than 32 bytes is an error.
-  (Apps don't need it: a tab mounts from its URL.)
+  (Apps don't need it either: a tab mounts from its URL.)
 - **Behind a proxy** (nginx, HAProxy, a load balancer): let WebSocket upgrades through to
-  swerve (`/_tether/live`, or `.tether/live` below an App), and keep the `Host` header: the live
+  swerve (the page's own URL for `from()`, `/_tether/live` for the middleware, `.tether/live` below an App), and keep the `Host` header: the live
   endpoint compares the page's `Origin` with it. A page served from another origin must be
   listed: `origins: ['https://app.example.com']`.
 - **Timeouts**: a live connection is quiet while nothing changes. Proxies that close idle
