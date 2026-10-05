@@ -57,8 +57,10 @@ While disconnected, `<html>` has the attribute `tether-offline`, for a "Reconnec
 html[tether-offline] body::before { content: 'Reconnecting…'; position: fixed; inset: 0 0 auto 0; background: #fd6; text-align: center }
 ```
 
-The browser waits a little longer after each connection that fails before mounting (up to 5 s),
-so a page that fails on every mount doesn't hammer the server.
+The browser waits longer after each connection (250 ms, doubling up to 5 s), and starts over
+only when a connection has stayed open for 5 s, so a page that fails right after every mount
+doesn't hammer the server. A connection the server refuses (a page from before a deploy changed
+its components) reloads the page.
 
 On the first render (the HTTP request), a failure is an ordinary exception in the route: your
 framework's error page, a 500. During navigation in an App, a route that throws makes the
@@ -85,8 +87,9 @@ A handler's exception text is not sent to the browser: a `push()` rejects with "
 A failure while the tab's frames are rendered or sent (a boundary's `catch()` that throws, a value
 that can't be encoded as JSON) crashes the tab like any other, and is logged.
 
-A `js()` call that fails throws `Tether\JsException` into the handler: catch it where the
-browser may lack something (a camera, a permission).
+A `js()` call that fails (the function throws, is missing, or its result can't be JSON) throws
+`Tether\JsException` into the handler: catch it where the browser may lack something (a camera,
+a permission).
 
 ## Logging
 

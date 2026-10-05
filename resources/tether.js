@@ -3,7 +3,8 @@
 // - Events: an element with tether-click / tether-input / tether-change / tether-submit /
 //   tether-keydown names a handler method of the component it is in (the nearest tether-id).
 //   The handler gets: nothing for click and keydown; the element's value for input and change;
-//   the form's fields as an object for submit, after the JSON array in tether-args if any
+//   the form's fields as an object for submit (a repeated name, or one ending in [], gives an
+//   array; no files), after the JSON array in tether-args if any
 //   (`tether-click="react" tether-args='[12, "👍"]'`). `tether-keydown="send"
 //   tether-key="Enter"` calls send() only for that combination: "Shift+Enter", "Mod+Enter" (Cmd
 //   on macOS, Ctrl elsewhere); several separated by spaces.
@@ -19,9 +20,11 @@
 //   gets its result (a promise is awaited).
 // - Navigation (an App's pages): once live, a click on a link below the App, and the browser's
 //   back and forward, go over the connection; the frame that answers says the new URL and
-//   title, or that the browser should load the URL itself.
+//   title, or that the browser should load the URL itself (http and https only).
 // - The connection drops (a reload, a restart, the network, a crash): hooks are destroyed, it
-//   reconnects, and the page's components mount again: from their props, or from the URL.
+//   reconnects, and the page's components mount again: from their props, or from the URL. The
+//   delay between attempts grows up to 5 s and starts over once a connection has lasted 5 s.
+//   A connection the server refuses (close code 1008: a page from before a deploy) reloads the page.
 (() => {
   'use strict';
   const mount = JSON.parse(document.getElementById('tether-mount').textContent);
@@ -33,16 +36,24 @@
   let socket = null;
   let live = false;
   let backoff = 250;
+  let settled = 0; // timer: the connection has stayed open long enough to start the backoff over
   let nextReply = 0;
 
   function connect() {
     socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${mount.live}`);
-    socket.onopen = () => socket.send(JSON.stringify(app ? { u: here() } : mount));
+    socket.onopen = () => {
+      socket.send(JSON.stringify(app ? { u: here() } : mount));
+      settled = setTimeout(() => { backoff = 250; }, 5000);
+    };
     socket.onmessage = (message) => {
       const frame = JSON.parse(message.data);
       const morphed = new Set();
       if (frame.nav?.load) {
-        location.assign(frame.nav.load);
+        if (/^https?:$/.test(new URL(frame.nav.load, location.href).protocol)) {
+          location.assign(frame.nav.load);
+        } else {
+          console.error('Tether: refused to load', frame.nav.load);
+        }
         return;
       }
       if (frame.nav) {
@@ -56,7 +67,6 @@
       }
       if (frame.t === 'mount') {
         // The whole tree, from a fresh mount: every component's HTML is new
-        backoff = 250;
         live = true;
         document.documentElement.removeAttribute('tether-offline');
         morph(document.querySelector('[tether-id]'), frame.html, null, morphed);
@@ -81,7 +91,12 @@
         }
       }
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
+      clearTimeout(settled);
+      if (event.code === 1008) {
+        location.reload();
+        return;
+      }
       live = false;
       document.documentElement.setAttribute('tether-offline', '');
       for (const [element, instance] of instances) {
@@ -179,12 +194,12 @@
       if (typeof target?.[name] !== 'function') {
         throw new Error(`${call.f} is not a function`);
       }
-      result = { t: 'return', i: call.i, v: (await target[name](...call.a)) ?? null };
+      result = JSON.stringify({ t: 'return', i: call.i, v: (await target[name](...call.a)) ?? null });
     } catch (error) {
-      result = { t: 'return', i: call.i, e: String(error?.message ?? error) };
+      result = JSON.stringify({ t: 'return', i: call.i, e: String(error?.message ?? error) });
     }
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(result));
+      socket.send(result);
     }
   }
 
@@ -234,6 +249,9 @@
         return;
       }
       if (type === 'keydown') {
+        if (event.isComposing || event.keyCode === 229) {
+          return; // Enter that commits an IME composition
+        }
         const keys = element.getAttribute('tether-key');
         if (keys && !keys.split(/[\s,]+/).some((combo) => pressed(combo, event))) {
           return;
@@ -281,10 +299,22 @@
   });
 
   listen('click', 'tether-click', () => []);
-  listen('input', 'tether-input', (element) => [element.value]);
-  listen('change', 'tether-change', (element) => [element.type === 'checkbox' ? element.checked : element.value]);
+  // A checkbox's checked state; every selected value of a select multiple
+  const valueOf = (element) => element.type === 'checkbox' ? element.checked : element.multiple ? [...element.selectedOptions].map((option) => option.value) : element.value;
+  const fields = (form) => {
+    const map = new Map();
+    for (const [name, value] of new FormData(form)) {
+      const list = name.endsWith('[]');
+      const key = list ? name.slice(0, -2) : name;
+      map.set(key, list || map.has(key) ? [].concat(map.get(key) ?? [], [value]) : value);
+    }
+    return Object.fromEntries(map);
+  };
+
+  listen('input', 'tether-input', (element) => [valueOf(element)]);
+  listen('change', 'tether-change', (element) => [valueOf(element)]);
   listen('keydown', 'tether-keydown', () => []);
-  listen('submit', 'tether-submit', (form) => [Object.fromEntries(new FormData(form))]);
+  listen('submit', 'tether-submit', (form) => [fields(form)]);
 
   window.Tether = {
     hook(name, definition) {

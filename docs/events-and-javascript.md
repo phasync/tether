@@ -8,9 +8,9 @@ An attribute on an element names a handler: a public method of the component the
 | Attribute | Fires on | The handler gets |
 |---|---|---|
 | `tether-click="save"` | click | nothing |
-| `tether-input="type"` | every change of an input's value | the value (`string`) |
-| `tether-change="pick"` | change (select, checkbox, committed input) | the value; for a checkbox, `true`/`false` |
-| `tether-submit="send"` | form submit (prevented) | the form's fields, `array<string, string>` |
+| `tether-input="type"` | every change of an input's value | the value (`string`); for a checkbox, `true`/`false` |
+| `tether-change="pick"` | change (select, checkbox, committed input) | the value; for a checkbox, `true`/`false`; for a `select multiple`, the selected values (`array`) |
+| `tether-submit="send"` | form submit (prevented) | the form's fields: the last value per name, an `array` for a repeated name (and always for one ending in `[]`, which loses the `[]`); no files |
 | `tether-keydown="add"` | a key | nothing; with `tether-key`, only that key combination (below) |
 
 **Arguments from the element.** `tether-args` holds a JSON array, passed before the event's
@@ -67,6 +67,7 @@ public function send(array $form): void
   }
   ```
 - When it returns, its component renders.
+- Enter that commits an IME composition (Japanese, Chinese, Korean input) never fires `tether-keydown`.
 - A click on a link with `tether-click` doesn't follow the link; `tether-key` keys don't type
   (Enter in a textarea sends, and adds no line).
 - Arguments must match the handler's parameter types (`int`, `float`, `string`, `bool`, `array`,

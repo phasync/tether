@@ -25,6 +25,7 @@ final class Page extends Component
               {$this->child(Clock::class)}
               {$this->child(TodoList::class)}
               {$this->child(Interop::class)}
+              {$this->child(Forms::class)}
               {$this->child(Panel::class)}
               <p><button tether-click="crash">Crash the tab</button></p>
             </main>

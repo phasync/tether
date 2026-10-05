@@ -58,6 +58,8 @@ async function connect(url) {
   });
   return {
     logs,
+    // Run a script in every page before its own scripts
+    init: (source) => send('Page.addScriptToEvaluateOnNewDocument', { source }),
     async goto(url) {
       const loaded = new Promise((r) => listeners.push((m) => m.method === 'Page.loadEventFired' && r()));
       await send('Page.navigate', { url });

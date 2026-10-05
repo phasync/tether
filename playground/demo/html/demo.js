@@ -14,4 +14,10 @@ Tether.hook('Stopwatch', {
   elapsed() {
     return Math.round(performance.now() - this.start);
   },
+  // Called by the server: a result that can not be JSON
+  circular() {
+    const loop = {};
+    loop.self = loop;
+    return loop;
+  },
 });

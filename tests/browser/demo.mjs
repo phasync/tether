@@ -28,6 +28,17 @@ const handshake = (origin) => new Promise((resolve, reject) => {
   socket.on('error', reject);
 });
 
+// Every WebSocket the page opens is kept in window.sockets; with window.corrupt set, the
+// signature of the mount message is spoiled
+await page.init(`(() => {
+  const Native = WebSocket;
+  window.sockets = [];
+  window.WebSocket = class extends Native {
+    constructor(...args) { super(...args); window.sockets.push(this); }
+    send(data) { super.send(window.corrupt ? String(data).replace(/"s":"[^"]*"/, '"s":"bad"') : data); }
+  };
+})()`);
+
 try {
   await page.goto(url);
   await check('goes live: the clock gets the server time', () => page.until(`document.querySelector('strong').textContent.match(/\\d\\d:\\d\\d:\\d\\d/)`));
@@ -49,6 +60,19 @@ try {
     await pause(200);
     const items = await page.eval(`document.querySelectorAll('li').length`);
     if (items !== 1) throw new Error(`${items} items`);
+  });
+
+  await check('Enter that commits an IME composition does not send', async () => {
+    await type('[tether-input=type]', 'Composing');
+    await pause(100);
+    const prevented = await page.eval(`['isComposing', 'keyCode'].map((field) => {
+      const event = new KeyboardEvent('keydown', {key: 'Enter', isComposing: field === 'isComposing', keyCode: field === 'keyCode' ? 229 : 13, bubbles: true, cancelable: true});
+      document.querySelector('[tether-input=type]').dispatchEvent(event);
+      return event.defaultPrevented;
+    })`);
+    await pause(200);
+    const items = await page.eval(`document.querySelectorAll('li').length`);
+    if (items !== 1 || prevented.some(Boolean)) throw new Error(`${items} items, prevented ${prevented}`);
   });
 
   await check('typing and Enter add an item', async () => {
@@ -94,6 +118,11 @@ try {
     await page.until(`/The browser says [1-9]\\d* ms/.test(document.getElementById('measured')?.textContent)`);
   });
 
+  await check('js() with a result that is not JSON fails with a JsException instead of hanging', async () => {
+    await click('[tether-click=badResult]');
+    await page.until(`document.getElementById('js-error')?.textContent.length > 0`);
+  });
+
   await check('tether-ignore: renders leave the browser\'s element alone', async () => {
     const state = await page.eval(`[document.getElementById('stopwatch').dataset.renders, document.getElementById('stopwatch').textContent]`);
     if (state[0] !== '1' || !state[1].includes('ms since the tab went live')) throw new Error('stopwatch ' + JSON.stringify(state));
@@ -121,6 +150,56 @@ try {
     await page.until(`window.lastReply === 'hello from the server'`); // live now: mounted again
     const who = await page.eval(`document.getElementById('who')?.textContent`);
     if (who !== 'Ada') throw new Error('live mount sees ' + JSON.stringify(who));
+  });
+
+  const seen = async (key) => JSON.stringify(await page.eval(`JSON.parse(document.getElementById('seen').textContent)[${JSON.stringify(key)}] ?? null`));
+
+  await check('tether-submit: repeated names become arrays, name[] is always an array', async () => {
+    await page.eval(`document.getElementById('form').requestSubmit()`);
+    await page.until(`document.getElementById('seen').textContent.includes('submit')`);
+    const got = await seen('submit');
+    if (got !== '{"note":"hi","tag":["a","b"],"solo":["x"]}') throw new Error(got);
+  });
+
+  await check('a checkbox sends its checked state in tether-input and tether-change', async () => {
+    await click('#box');
+    await page.until(`document.getElementById('seen').textContent.includes('change')`);
+    const got = [await seen('input'), await seen('change')];
+    if (got.join() !== 'true,true') throw new Error(got.join());
+    await click('#box');
+    await page.until(`!JSON.parse(document.getElementById('seen').textContent).change`);
+    const off = [await seen('input'), await seen('change')];
+    if (off.join() !== 'false,false') throw new Error(off.join());
+  });
+
+  await check('a select multiple sends every selected value', async () => {
+    await page.eval(`(() => { const s = document.getElementById('multi'); s.options[0].selected = true; s.options[2].selected = true; s.dispatchEvent(new Event('change', {bubbles: true})); })()`);
+    await page.until(`document.getElementById('seen').textContent.includes('pick')`);
+    const got = await seen('pick');
+    if (got !== '["one","three"]') throw new Error(got);
+  });
+
+  await check('navigation to a URL that is not http(s) is refused, one to a page of the site is followed', async () => {
+    await page.eval(`window.sockets.at(-1).onmessage({data: JSON.stringify({nav: {load: 'javascript:window.xss = 1'}})})`);
+    await pause(300);
+    if (await page.eval(`window.xss === 1`)) throw new Error('the javascript: URL ran');
+    await page.eval(`window.sockets.at(-1).onmessage({data: JSON.stringify({nav: {load: '/login?name=Grace'}})})`);
+    await page.until(`document.getElementById('who')?.textContent === 'Grace'`);
+  });
+
+  await check('a rejected connection (stale signature) reloads the page instead of retrying it', async () => {
+    await page.until(`window.lastReply === 'hello from the server'`);
+    await page.eval(`window.samePage = true; window.corrupt = true; window.sockets.at(-1).close()`);
+    await page.until(`window.samePage !== true && document.getElementById('who')`, 5000);
+    await page.until(`window.lastReply === 'hello from the server'`);
+  });
+
+  await check('a tab that fails right after mounting backs off between reconnects', async () => {
+    await page.goto(new URL('/loop', url).href);
+    await page.eval(`window.sockets.length = 0`);
+    await pause(3000);
+    const opens = await page.eval(`window.sockets.length`);
+    if (opens > 6) throw new Error(`${opens} connections in 3 s`);
   });
 
   await check('a page from another site can not open a live connection', async () => {

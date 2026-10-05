@@ -22,6 +22,12 @@ for it. Treat each like a POST route:
 be escaped: `htmlspecialchars($value)` in text and in quoted attribute values. Never put user
 input into `tether-*` attributes, `<script>`, `style` or URLs without checking it.
 
+## Navigation
+
+The browser loads a URL from `navigate()` or a redirect only when it is `http:` or `https:`; a
+`javascript:` URL is refused and logged to the console. Still validate a URL before you redirect
+to it: an address that came from a user is an open redirect.
+
 ## Routes are public URLs
 
 An App's routes are URLs anyone can open: check in the route who may see the page (redirect to
