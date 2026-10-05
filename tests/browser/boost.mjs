@@ -60,6 +60,7 @@ try {
     if (await page.eval(`window.marker`) !== 'survives') throw new Error('the document was reloaded');
     if (await page.eval(`document.title`) !== 'Boost b' || await text('h1') !== 'Page b') throw new Error('not page b');
     if (await page.eval(`window.scrollY`) !== 0) throw new Error('scrolled');
+    if (await page.eval(`window.bodyScripts`) !== 1) throw new Error('a script of the target page ran: ' + await page.eval(`window.bodyScripts`));
     if (await page.eval(`JSON.stringify(window.boosted)`) !== JSON.stringify([new URL('/boost/b', url).href])) throw new Error('event ' + await page.eval(`JSON.stringify(window.boosted)`));
     if (await page.eval(`document.documentElement.hasAttribute('tether-navigating')`)) throw new Error('still navigating');
   });

@@ -42,6 +42,7 @@ final class Boost extends Component
                 <button id="hold" tether-click="hold">Hold</button></p>
               <div style="height: 2000px"></div>
               <p id="end">End</p>
+              <script>window.bodyScripts = (window.bodyScripts || 0) + 1</script>
             </main>
             HTML;
     }
