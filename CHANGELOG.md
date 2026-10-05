@@ -20,7 +20,7 @@ Requires phasync 2.0.0-beta7 and swerve 0.1.0-beta5.
 - A `Tether::from()` page the server refuses (1008) stays static with `tether-offline`.
 
 ### Removed
-- `js()`, `Tether.push` and `tether-key`; use `$this->browser()` and `tether-keydown`.
+- `js()` and `tether-key`: use `$this->browser()` and `tether-keydown.key-enter`.
 
 ### Deprecated
 - `Tether::page()` and the middleware: removed at 1.0. `App` stays until `from()` pages can navigate over the open connection.
