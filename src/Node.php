@@ -21,6 +21,9 @@ final class Node
     /** @var array<string, mixed> the props last given */
     public array $props = [];
 
+    /** Handlers queued or running: counted in the Circuit's running, and counted out when the node unmounts. */
+    public int $pending = 0;
+
     /** The HTML of the last render. */
     public string $html = '';
 

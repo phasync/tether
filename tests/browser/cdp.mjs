@@ -56,8 +56,54 @@ async function connect(url) {
     if (m.method === 'Runtime.consoleAPICalled') logs.push(m.params.args.map((a) => a.value).join(' '));
     if (m.method === 'Runtime.exceptionThrown') logs.push('EXCEPTION ' + m.params.exceptionDetails.exception?.description);
   });
+  const modifiers = (m) => (m.alt ? 1 : 0) | (m.ctrl ? 2 : 0) | (m.meta ? 4 : 0) | (m.shift ? 8 : 0);
+  const key = (k) => (k.length === 1 ? { key: k, text: k, code: /[a-z]/i.test(k) ? 'Key' + k.toUpperCase() : undefined } : { key: k });
   return {
     logs,
+    send,
+    // Listen to a protocol event (Input.dragIntercepted, ...)
+    on: (method, fn) => listeners.push((m) => m.method === method && fn(m.params)),
+    // Real input, from the browser's input pipeline (Input.dispatch*): what a user's devices produce
+    mouse: {
+      move: (x, y, o = {}) => send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: o.buttons ?? 0, button: o.buttons ? 'left' : 'none', modifiers: modifiers(o) }),
+      down: (x, y, o = {}) => send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: o.button ?? 'left', buttons: 1, clickCount: o.clickCount ?? 1, modifiers: modifiers(o) }),
+      up: (x, y, o = {}) => send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: o.button ?? 'left', buttons: 0, clickCount: o.clickCount ?? 1, modifiers: modifiers(o) }),
+      wheel: (x, y, deltaX, deltaY) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY }),
+      async click(x, y, o = {}) {
+        await this.move(x, y);
+        await this.down(x, y, o);
+        await this.up(x, y, o);
+      },
+    },
+    // Touch needs Emulation.setTouchEmulationEnabled; points are [{x, y, id}]
+    touch: {
+      enable: () => send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }),
+      start: (points) => send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points }),
+      move: (points) => send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points }),
+      end: () => send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+    },
+    // A key press: keyDown (with text, so that it types), then keyUp; repeat: the auto-repeat of a held key
+    keys: {
+      down: (k, o = {}) => send('Input.dispatchKeyEvent', { type: o.noText || k.length > 1 ? 'rawKeyDown' : 'keyDown', ...key(k), modifiers: modifiers(o), autoRepeat: !!o.repeat, ...(o.code ? { code: o.code } : {}), windowsVirtualKeyCode: o.vk }),
+      up: (k, o = {}) => send('Input.dispatchKeyEvent', { type: 'keyUp', ...key(k), modifiers: modifiers(o), ...(o.code ? { code: o.code } : {}), windowsVirtualKeyCode: o.vk }),
+      async press(k, o = {}) {
+        await this.down(k, o);
+        await this.up(k, o);
+      },
+      // Text as typed keys
+      async type(text) {
+        for (const c of text) await this.press(c);
+      },
+    },
+    // An input method composing: the composition (compositionupdate), then the committed text
+    ime: {
+      compose: (text) => send('Input.imeSetComposition', { text, selectionStart: text.length, selectionEnd: text.length }),
+      commit: (text) => send('Input.insertText', { text }),
+    },
+    // The centre of an element, scrolled into view
+    async centre(selector) {
+      return this.eval(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); e.scrollIntoView({block: 'center'}); const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+    },
     // Run a script in every page before its own scripts
     init: (source) => send('Page.addScriptToEvaluateOnNewDocument', { source }),
     async goto(url) {

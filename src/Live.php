@@ -121,7 +121,7 @@ final class Live
      * @param (\Closure(string): array{0: ?Page, 1: string})|null $resolve a URL's page, or null
      *                                                                     for a full page load; null: every navigation is a full page load
      */
-    public static function tab(WebSocket $ws, Page $page, ?\Closure $resolve, ?ServerRequestInterface $request = null): void
+    public static function tab(WebSocket $ws, Page $page, ?\Closure $resolve, ?ServerRequestInterface $request = null, Limits $limits = new Limits()): void
     {
         $circuit = new Circuit(
             send: static fn (array $frame) => $ws->send(\json_encode($frame, \JSON_THROW_ON_ERROR)),
@@ -131,12 +131,14 @@ final class Live
             },
             resolve: $resolve,
             request: $request,
+            limits: $limits,
+            abuse: static fn () => $ws->end(4429),
         );
         try {
             if (null === ($html = $circuit->mount($page->class, $page->props))) {
                 return;
             }
-            $ws->send(\json_encode(['t' => 'mount', 'html' => $html], \JSON_THROW_ON_ERROR));
+            $ws->send(\json_encode(['t' => 'mount', 'html' => $html, 'lim' => ['eps' => $limits->eventsPerSecond, 'burst' => $limits->burst, 'bytes' => $limits->bytes]], \JSON_THROW_ON_ERROR));
             $writer = \phasync::go($circuit->run(...));
             while (null !== ($message = $ws->receive())) {
                 $message = \json_decode($message, true);
@@ -144,12 +146,18 @@ final class Live
                     continue;
                 }
                 if ('return' === ($message['t'] ?? null) && \is_int($message['i'] ?? null)) {
+                    if (!$circuit->admit()) {
+                        continue;
+                    }
                     $circuit->returned($message['i'], $message['v'] ?? null, isset($message['e']) ? (string) $message['e'] : null);
                 } elseif ('navigate' === ($message['t'] ?? null) && \is_string($message['u'] ?? null)) {
+                    if (!$circuit->admit()) {
+                        continue;
+                    }
                     $circuit->navigate($message['u'], (bool) ($message['p'] ?? true));
-                } elseif (\is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_int($message['r'] ?? 0)) {
+                } elseif (\is_string($message['c'] ?? null) && \is_string($message['m'] ?? null) && \is_array($message['a'] ?? []) && \is_int($message['r'] ?? 0) && \is_array($message['e'] ?? [])) {
                     try {
-                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null);
+                        $circuit->event($message['c'], $message['m'], $message['a'] ?? [], $message['r'] ?? null, $message['e'] ?? []);
                     } catch (\InvalidArgumentException $e) {
                         Swerve::log()->warning('Tether: {message}', ['message' => $e->getMessage()]);
                     }

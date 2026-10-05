@@ -53,7 +53,7 @@ try {
     await page.until(`document.body.textContent.includes('Clicked 8 times')`);
   });
 
-  await check('tether-key="Enter" is Enter alone: Shift+Enter does not send', async () => {
+  await check('tether-keydown.key-enter is Enter alone: Shift+Enter does not send', async () => {
     await type('[tether-input=type]', 'Not this');
     await pause(100);
     await page.eval(`document.querySelector('[tether-input=type]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', shiftKey: true, bubbles: true}))`);

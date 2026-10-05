@@ -55,7 +55,7 @@ final class Chat extends Component
               <h1>#{$room}</h1>
               <p>{$status}, at <code id="path">{$path}</code></p>
               <ul id="lines">{$lines}</ul>
-              <input id="text" value="{$draft}" placeholder="Say something" tether-input="type" tether-keydown="say" tether-key="Enter">
+              <input id="text" value="{$draft}" placeholder="Say something" tether-input="type" tether-keydown.key-enter="say">
             </main>
             HTML;
     }

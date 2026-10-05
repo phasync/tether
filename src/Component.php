@@ -94,10 +94,14 @@ abstract class Component
      * Go to $url in this tab, as if a link to it was followed: with an App, a page of the App
      * changes the page over the live connection; any other URL is a full page load. From an
      * event handler or run().
+     *
+     * With $replace the browser's history entry is replaced instead of a new one added: for a
+     * redirect, a filter or a tab that updates the URL as it changes, which the back button
+     * should not step through.
      */
-    final protected function navigate(string $url): void
+    final protected function navigate(string $url, bool $replace = false): void
     {
-        $this->circuit->navigate($url);
+        $this->circuit->navigate($url, !$replace);
     }
 
     /**

@@ -5,6 +5,7 @@ namespace Tether;
 use phasync\CancelledException;
 use Psr\Http\Message\ServerRequestInterface;
 use Swerve\Swerve;
+use Tether\Event\EventArgs;
 
 /**
  * One browser tab's components: the tree, rendering, events, calls to and from the browser,
@@ -31,6 +32,11 @@ use Swerve\Swerve;
  * Navigation (a link, back or forward, Component::navigate()) is the writer's too: $resolve
  * gives the URL's page. The same root class takes the new props; another replaces the root; no
  * page (or no $resolve) is a full page load in the browser.
+ *
+ * What the browser sends is admitted first (admit()): events, navigations and the rest draw
+ * from one token bucket (Limits), and an empty bucket is abuse, which closes the connection.
+ * Handlers running at once are limited too: past that, an event is refused, and the
+ * connection stays.
  *
  * A Circuit that is not live renders once, for the page's first HTML: no coroutines, no events.
  */
@@ -72,6 +78,18 @@ final class Circuit
     /** @var list<array{0: string, 1: bool}> URLs to navigate to, and whether it is a new history entry */
     private array $navigations = [];
 
+    /** @var list<array{m: string}> events refused without a reply to carry it, for the next frame */
+    private array $refused = [];
+
+    /** Handlers queued or running, in all the tab's components. */
+    private int $running = 0;
+
+    private float $tokens;
+
+    private float $refilled;
+
+    private float $overrunLogged = 0.0;
+
     /**
      * @param \Closure(array): void|null      $send   sends a frame to the browser; null when not live
      * @param float                           $maxFps the most frames a second
@@ -79,6 +97,8 @@ final class Circuit
      * @param (\Closure(string): array{0: ?Page, 1: string})|null $resolve the page at a URL, and
      *                                                                     the URL after redirects; no page: a full page load
      * @param ServerRequestInterface|null     $request the request the tab belongs to, for Component::request()
+     * @param Limits                          $limits  what the browser may ask of the tab
+     * @param \Closure(): void|null           $abuse   told when the browser sends more than the limits allow (the connection should close)
      */
     public function __construct(
         private readonly ?\Closure $send = null,
@@ -86,7 +106,31 @@ final class Circuit
         private readonly ?\Closure $crash = null,
         private readonly ?\Closure $resolve = null,
         private readonly ?ServerRequestInterface $request = null,
+        private readonly Limits $limits = new Limits(),
+        private readonly ?\Closure $abuse = null,
     ) {
+        $this->tokens   = $limits->burst;
+        $this->refilled = \microtime(true);
+    }
+
+    /**
+     * Take a token for something the browser sent. False when the bucket was empty: that is
+     * abuse (the client keeps to 90% of the rate), and $abuse has been told.
+     */
+    public function admit(): bool
+    {
+        $now            = \microtime(true);
+        $this->tokens   = \min($this->limits->burst, $this->tokens + ($now - $this->refilled) * $this->limits->eventsPerSecond);
+        $this->refilled = $now;
+        if ($this->tokens >= 1) {
+            --$this->tokens;
+
+            return true;
+        }
+        Swerve::log()->warning('Tether: the tab sent more than {rate} events a second, and is closed', ['rate' => $this->limits->eventsPerSecond]);
+        $this->abuse?->__invoke();
+
+        return false;
     }
 
     public function request(): ServerRequestInterface
@@ -103,7 +147,7 @@ final class Circuit
         $next = 0.0;
         try {
             while (true) {
-                while (!$this->dirty && !$this->calls && !$this->replies && !$this->failures && !$this->navigations) {
+                while (!$this->dirty && !$this->calls && !$this->replies && !$this->failures && !$this->navigations && !$this->refused) {
                     \phasync::awaitFlag($this);
                 }
                 $wait = $next - \microtime(true);
@@ -153,29 +197,63 @@ final class Circuit
      * An event from the browser: queue it for the component's inbox, which calls the handler
      * in a coroutine of the component's and renders the component. An unknown component is one the
      * page no longer shows: ignored. With $reply, the browser waits for the handler's return
-     * value (a hook's push()).
+     * value (a hook's push()), or for the acknowledgement of an event it paces.
+     *
+     * $payload is what the browser says about the event: the handler gets it as its last
+     * parameter when that is typed EventArgs or a subclass (never otherwise: $args alone fill
+     * the other parameters).
+     *
+     * An event the tab may not have (the bucket is empty, so the connection is closing) or
+     * can not take (too many handlers running) is dropped, and refused when there is a reply or
+     * the next frame can tell.
      *
      * @throws \InvalidArgumentException no such handler, or arguments it does not take
      */
-    public function event(string $id, string $method, array $args, ?int $reply = null): void
+    public function event(string $id, string $method, array $args, ?int $reply = null, array $payload = []): void
     {
+        if (!$this->admit()) {
+            return;
+        }
         $node = $this->nodes[$id] ?? null;
         try {
             if (null === $node) {
                 throw new \InvalidArgumentException('No component ' . self::printable($id) . ': it has left the page');
             }
-            self::checkCall($node->component, $method, $args);
+            $args = self::bind($node->component, $method, $args, $payload);
         } catch (\InvalidArgumentException $e) {
             if (null !== $reply) {
                 $this->reply($reply, error: $e->getMessage());
+            } elseif (null !== $node) {
+                $this->refuse($method);
             }
             if (null === $node) {
                 return;
             }
             throw $e;
         }
+        if ($this->running >= $this->limits->running) {
+            if (null !== $reply) {
+                $this->reply($reply, error: 'The tab has too many events running');
+            } else {
+                $this->refuse($method);
+            }
+            if (($now = \microtime(true)) - $this->overrunLogged >= 1) {
+                $this->overrunLogged = $now;
+                Swerve::log()->warning('Tether: {component}::{method}() refused: {running} events are running in the tab', ['component' => $node->component::class, 'method' => self::printable($method), 'running' => $this->running]);
+            }
+
+            return;
+        }
+        ++$this->running;
+        ++$node->pending;
         $node->events->enqueue([$method, $args, $reply]);
         \phasync::raiseFlag($node);
+    }
+
+    private function refuse(string $method): void
+    {
+        $this->refused[] = ['m' => \substr($method, 0, 64)];
+        \phasync::raiseFlag($this);
     }
 
     /**
@@ -314,6 +392,9 @@ final class Circuit
         }
         if ($this->replies) {
             [$frame['replies'], $this->replies] = [$this->replies, []];
+        }
+        if ($this->refused) {
+            [$frame['refused'], $this->refused] = [$this->refused, []];
         }
         if (\count($frame) > 1) {
             ($this->send)($frame);
@@ -471,6 +552,12 @@ final class Circuit
                         $this->failed($node, $e);
 
                         return;
+                    } finally {
+                        // Unmounting has counted the node's handlers out already
+                        if ($node->pending > 0) {
+                            --$node->pending;
+                            --$this->running;
+                        }
                     }
                     $this->requestRender($node->component);
                 });
@@ -572,6 +659,8 @@ final class Circuit
         }
         $id = $node->component->tetherId;
         unset($this->nodes[$id], $this->dirty[$id]);
+        $this->running -= $node->pending;
+        $node->pending = 0;
         foreach ($node->fibers as $fiber => $_) {
             if ($fiber !== \Fiber::getCurrent() && !$fiber->isTerminated()) {
                 \phasync::cancel($fiber);
@@ -602,11 +691,14 @@ final class Circuit
 
     /**
      * The browser may call $method with $args: a public method of the component's own class
-     * (none of Component's or ErrorBoundary's), and arguments of its parameters' types.
+     * (none of Component's or ErrorBoundary's), and arguments of its parameters' types. A last
+     * parameter typed EventArgs (or a subclass) is not one of them: it gets $payload.
+     *
+     * @return list<mixed> the arguments to call it with
      *
      * @throws \InvalidArgumentException
      */
-    private static function checkCall(Component $component, string $method, array $args): void
+    private static function bind(Component $component, string $method, array $args, array $payload): array
     {
         $name = $component::class . '::' . self::printable($method) . '()';
         if (!\method_exists($component, $method) || \str_starts_with($method, '__') || \method_exists(Component::class, $method) || ($component instanceof ErrorBoundary && 'catch' === \strtolower($method))) {
@@ -617,8 +709,16 @@ final class Circuit
             throw new \InvalidArgumentException("$name is not an event handler");
         }
         $parameters = $reflection->getParameters();
-        if (!\array_is_list($args) || \count($args) < $reflection->getNumberOfRequiredParameters() || (!$reflection->isVariadic() && \count($args) > \count($parameters))) {
-            throw new \InvalidArgumentException(\sprintf('%s takes %d to %s arguments, not %d', $name, $reflection->getNumberOfRequiredParameters(), $reflection->isVariadic() ? 'any' : \count($parameters), \count($args)));
+        $required   = $reflection->getNumberOfRequiredParameters();
+        $eventClass = null;
+        $last       = \end($parameters);
+        if ($last && !$last->isVariadic() && ($type = $last->getType()) instanceof \ReflectionNamedType && \is_a($type->getName(), EventArgs::class, true)) {
+            $eventClass = $type->getName();
+            \array_pop($parameters);
+            $required = \min($required, \count($parameters));
+        }
+        if (!\array_is_list($args) || \count($args) < $required || (!$reflection->isVariadic() && \count($args) > \count($parameters))) {
+            throw new \InvalidArgumentException(\sprintf('%s takes %d to %s arguments, not %d', $name, $required, $reflection->isVariadic() ? 'any' : \count($parameters), \count($args)));
         }
         foreach ($args as $i => $value) {
             $parameter = $parameters[\min($i, \count($parameters) - 1)];
@@ -626,6 +726,19 @@ final class Circuit
                 throw new \InvalidArgumentException(\sprintf('%s: argument $%s must be %s, not %s', $name, $parameter->getName(), $parameter->getType(), \get_debug_type($value)));
             }
         }
+        if (null !== $eventClass) {
+            // Optional parameters between the arguments and the event take their defaults
+            for ($i = \count($args); $i < \count($parameters); ++$i) {
+                $args[] = $parameters[$i]->getDefaultValue();
+            }
+            try {
+                $args[] = $eventClass::from($payload);
+            } catch (\InvalidArgumentException $e) {
+                throw new \InvalidArgumentException("$name: " . $e->getMessage(), 0, $e);
+            }
+        }
+
+        return $args;
     }
 
     /** Text from the browser, for a message that is logged: short, on one line. */

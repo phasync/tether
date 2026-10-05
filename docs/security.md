@@ -74,5 +74,7 @@ let through; they have no cookies of your visitors.
 - A message from the browser is at most 1 MiB; larger closes the connection.
 - A client that stops reading for 30 s is disconnected.
 - Rendering is limited to 30 frames a second per tab, whatever the events.
-- There is no rate limit on events: a handler that does expensive work for every call should
-  limit itself.
+- A tab may send 200 events a second (bursts of 400) and run 64 handlers at once; more closes
+  the connection (code 4429) or refuses the call. `Tether\Limits` changes them
+  ([events](events-and-javascript.md#how-events-leave-the-browser)). A handler that does
+  expensive work for every call should still limit itself.

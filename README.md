@@ -90,8 +90,9 @@ and PHP 8.3 or later runs it. You don't have to start there:
    Apps, swerve, the demo, production.
 2. [Components](docs/components.md): props, render(), children, mount(), run(), go(), rendering.
 3. [Apps and navigation](docs/apps.md): for several live pages: routes, pages, layouts that survive navigation.
-4. [Events and JavaScript](docs/events-and-javascript.md): tether-click and friends, hooks,
-   js(), tether-ignore.
+4. [Events and JavaScript](docs/events-and-javascript.md): every DOM event with modifiers
+   (`tether-on-pointermove.throttle-50`), typed event data, pacing and limits; hooks, js(),
+   tether-ignore.
 5. [State, sessions and many users](docs/state.md): the tab's request, sign-in, the database,
    publish/subscribe between tabs, presence, streaming from an LLM.
 6. [Errors](docs/errors.md): error boundaries, crashes, logging.

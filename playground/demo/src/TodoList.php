@@ -43,7 +43,7 @@ final class TodoList extends Component
         return <<<HTML
             <section>
               <ul>{$items}</ul>
-              <input value="{$draft}" tether-input="type" tether-keydown="add" tether-key="Enter" placeholder="New item, then Enter">
+              <input value="{$draft}" tether-input="type" tether-keydown.key-enter="add" placeholder="New item, then Enter">
             </section>
             HTML;
     }

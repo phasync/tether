@@ -47,8 +47,9 @@ final class Tether implements MiddlewareInterface
      *                                                                              connections, such as "https://app.example.com"
      * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter   runs a tab (the closure) as the work of its
      *                                                                              request, after the framework handled it
+     * @param Limits                                                       $limits  what a tab may ask of the server (see Limits)
      */
-    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null, public readonly bool $live = false)
+    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null, public readonly bool $live = false, private readonly Limits $limits = new Limits())
     {
     }
 
@@ -76,14 +77,15 @@ final class Tether implements MiddlewareInterface
      * is a deferred module: the application's defer scripts that call Tether.hook() run after
      * it); a shell that leaves it out is an error. $nonce is for a Content-Security-Policy that
      * needs one on inline scripts. $origins: other origins whose pages may open the live
-     * connection, as for the middleware; the Origin must be this host otherwise.
+     * connection, as for the middleware; the Origin must be this host otherwise. $limits is
+     * what a tab may ask of the server: events a second, handlers running, message size.
      *
      * @param \Closure(Tether): (Page|ResponseInterface)                  $page
      * @param \Closure(string, string, Page): string|null                 $shell
      * @param list<string>                                                $origins
      * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter
      */
-    public static function from(ServerRequestInterface $request, \Closure $page, ?\Closure $shell = null, array $origins = [], ?\Closure $enter = null, string $nonce = ''): ResponseInterface
+    public static function from(ServerRequestInterface $request, \Closure $page, ?\Closure $shell = null, array $origins = [], ?\Closure $enter = null, string $nonce = '', Limits $limits = new Limits()): ResponseInterface
     {
         $method = $request->getMethod();
         if ('GET' !== $method && 'HEAD' !== $method) {
@@ -95,12 +97,12 @@ final class Tether implements MiddlewareInterface
             }
             $result = self::answer($page(new self(live: true)));
             if ($result instanceof Page) {
-                return WebSocket::from($request, static function (WebSocket $ws) use ($request, $result, $enter) {
+                return WebSocket::from($request, static function (WebSocket $ws) use ($request, $result, $enter, $limits) {
                     // The browser's first message, sent on open, is the barrier: the 101 is out and the handler returned
                     if (null === $ws->receive()) {
                         return;
                     }
-                    $tab = static fn () => Live::tab($ws, $result, null, $request);
+                    $tab = static fn () => Live::tab($ws, $result, null, $request, $limits);
                     null === $enter ? $tab() : $enter($request, $tab);
                 });
             }
@@ -183,7 +185,8 @@ final class Tether implements MiddlewareInterface
 
             return;
         }
-        $tab = static fn () => Live::tab($ws, new Page($mount['c'], $mount['p']), null, $request);
+        $limits = $this->limits;
+        $tab = static fn () => Live::tab($ws, new Page($mount['c'], $mount['p']), null, $request, $limits);
         null === $this->enter ? $tab() : ($this->enter)($request, $tab);
     }
 

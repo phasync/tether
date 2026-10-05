@@ -50,8 +50,9 @@ abstract class App implements RequestHandlerInterface
     /**
      * @param list<string>                                                 $origins other origins whose pages may open live connections
      * @param \Closure(ServerRequestInterface, \Closure(): void): void|null $enter   runs a tab as the work of its request
+     * @param Limits                                                       $limits  what a tab may ask of the server (see Limits)
      */
-    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null)
+    public function __construct(private readonly array $origins = [], private readonly ?\Closure $enter = null, private readonly Limits $limits = new Limits())
     {
         foreach ((new \ReflectionObject($this))->getMethods() as $method) {
             foreach ($method->getAttributes(Route::class) as $attribute) {
@@ -146,7 +147,7 @@ abstract class App implements RequestHandlerInterface
 
                 return;
             }
-            Live::tab($ws, $page, $resolve, $request);
+            Live::tab($ws, $page, $resolve, $request, $this->limits);
         };
         null === $this->enter ? $tab() : ($this->enter)($request, $tab);
     }
