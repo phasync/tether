@@ -81,6 +81,10 @@ public function send(array $form): void
 }
 ```
 
+A handler's exception text is not sent to the browser: a `push()` rejects with "The handler failed".
+A failure while the tab's frames are rendered or sent (a boundary's `catch()` that throws, a value
+that can't be encoded as JSON) crashes the tab like any other, and is logged.
+
 A `js()` call that fails throws `Tether\JsException` into the handler: catch it where the
 browser may lack something (a camera, a permission).
 
@@ -88,4 +92,4 @@ browser may lack something (a camera, a permission).
 
 Tether logs through `Swerve::log()` (PSR-3), which swerve writes to its log: failures caught by
 boundaries and crashes at level error, refused events (unknown handlers, wrong argument types)
-at level warning.
+at level warning, with the browser's text cut to 64 characters on one line.

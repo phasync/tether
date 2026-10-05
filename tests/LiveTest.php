@@ -51,6 +51,11 @@ final class Probe extends Component
         throw new RuntimeException('handler failed');
     }
 
+    public function leak(): void
+    {
+        throw new RuntimeException('SQLSTATE[HY000]: host db.internal');
+    }
+
     public function callBrowser(): mixed
     {
         return $this->js('Probe.answer', 42);
@@ -104,6 +109,57 @@ final class Boundary extends Component implements ErrorBoundary
     }
 }
 
+/** A boundary whose catch() fails. */
+final class BrokenBoundary extends Component implements ErrorBoundary
+{
+    public function catch(Throwable $e): void
+    {
+        throw new RuntimeException('catch failed');
+    }
+
+    public function render(): string
+    {
+        return '<div>' . $this->child(Probe::class) . '</div>';
+    }
+}
+
+/** Mounting it takes 50 ms. */
+final class Slow extends Component
+{
+    public function mount(): void
+    {
+        phasync::sleep(0.05);
+    }
+
+    public function render(): string
+    {
+        return '<i>slow</i>';
+    }
+}
+
+/** A Probe, and a Slow child once shown; the count is read before the child is made. */
+final class Host extends Component
+{
+    public bool $show = false;
+
+    public int $count = 0;
+
+    public function show(): void
+    {
+        $this->show = true;
+    }
+
+    public function bump(): void
+    {
+        ++$this->count;
+    }
+
+    public function render(): string
+    {
+        return '<div>' . $this->count . $this->child(Probe::class) . ($this->show ? $this->child(Slow::class) : '') . '</div>';
+    }
+}
+
 /**
  * Mount $class live, run $act(circuit, frames) in a coroutine of the tab's request, and return
  * the frames sent and whether the tab crashed. Frames are JSON-decoded, as the browser gets them.
@@ -127,7 +183,7 @@ function live(string $class, array $props, Closure $act): array
                 $result = $act($circuit, $frames);
                 phasync::sleep(0.02);
             } finally {
-                phasync::cancel($writer);
+                $writer->isTerminated() || phasync::cancel($writer);
                 $circuit->close();
             }
 
@@ -221,8 +277,8 @@ test('a JavaScript error comes back as a JsException', function () {
         $circuit->returned($frames[0]['calls'][0]['i'], null, 'Probe.answer is not a function');
         phasync::sleep(0.02);
     });
-    // The handler did not catch it: the push is rejected with it, and the tab crashed
-    expect(replies($out['frames'])[1]['e'])->toBe('Probe.answer is not a function');
+    // The handler did not catch it: the push is rejected, and the tab crashed
+    expect(replies($out['frames'])[1]['e'])->toBe('The handler failed');
     expect($out['crashed'])->toBe('Probe.answer is not a function');
 });
 
@@ -332,4 +388,57 @@ test('with mini\'s RequestDispatcher::within() as enter, component coroutines se
         phasync::sleep(0.02);
     });
     expect(replies($out['frames'])[1]['v'])->toBe('t1');
+});
+
+test('a failure while the writer sends a frame crashes the tab, instead of leaving it silent', function () {
+    $out = live(BrokenBoundary::class, [], static function (Circuit $circuit) {
+        $circuit->event('c2', 'fail', []);
+        phasync::sleep(0.05);
+    });
+    expect($out['crashed'])->toBe('catch failed');
+});
+
+test('a handler\'s exception text does not reach the browser', function () {
+    $out = live(Probe::class, [], static function (Circuit $circuit) {
+        $circuit->event('c1', 'leak', [], reply: 1);
+        phasync::sleep(0.02);
+    });
+    expect(replies($out['frames'])[1]['e'])->toBe('The handler failed');
+    expect($out['crashed'])->toContain('SQLSTATE');
+});
+
+test('a method name from the browser is neither long nor multi-line in the refusal', function () {
+    live(Probe::class, [], static function (Circuit $circuit) {
+        try {
+            $circuit->event('c1', "x\nFAKE LOG LINE" . str_repeat('a', 5000), []);
+        } catch (InvalidArgumentException $e) {
+            expect($e->getMessage())->not->toContain("\n")->and(strlen($e->getMessage()))->toBeLessThan(200);
+
+            return;
+        }
+        throw new LogicException('not refused');
+    });
+});
+
+test('a change made while render() waits is rendered in the next frame', function () {
+    $out = live(Host::class, [], static function (Circuit $circuit) {
+        $circuit->event('c1', 'show', []);
+        phasync::sleep(0.02); // the writer is in Slow::mount()
+        $circuit->event('c1', 'bump', []);
+        phasync::sleep(0.15);
+    });
+    $patches = array_merge(...array_map(static fn ($f) => $f['patches'] ?? [], $out['frames']));
+    expect(end($patches)['html'])->toStartWith('<div tether-id="c1">1');
+});
+
+test('js() from another component while a render waits is not refused', function () {
+    $out = live(Host::class, [], static function (Circuit $circuit) {
+        $circuit->event('c1', 'show', []);
+        phasync::sleep(0.02);
+        $circuit->event('c2', 'callBrowser', []);
+        phasync::sleep(0.15);
+    });
+    expect($out['crashed'])->toBeNull();
+    $calls = array_merge(...array_map(static fn ($f) => $f['calls'] ?? [], $out['frames']));
+    expect($calls)->toHaveCount(1);
 });

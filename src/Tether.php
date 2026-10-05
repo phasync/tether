@@ -93,19 +93,31 @@ final class Tether implements MiddlewareInterface
     private static function key(): string
     {
         static $key = null;
-        if (null !== $key) {
-            return $key;
+
+        return $key ??= self::loadKey(\sys_get_temp_dir() . '/tether-' . \md5(\dirname(__DIR__)) . '.key');
+    }
+
+    /**
+     * TETHER_SECRET, or else the key the workers share in $file: made by whichever gets there
+     * first, complete and private from the moment it exists.
+     */
+    private static function loadKey(string $file): string
+    {
+        $key = (string) \getenv('TETHER_SECRET');
+        if ('' === $key) {
+            if (!\is_file($file)) {
+                $temp = \tempnam(\dirname($file), 'tether-'); // mode 0600
+                \file_put_contents($temp, \bin2hex(\random_bytes(32)));
+                // link() fails when another worker made the file first, and never replaces it
+                @\link($temp, $file);
+                \unlink($temp);
+            }
+            $key = (string) \file_get_contents($file);
         }
-        if ('' !== ($secret = (string) \getenv('TETHER_SECRET'))) {
-            return $key = $secret;
-        }
-        // Shared by the workers: created once, by whichever gets here first
-        $file = \sys_get_temp_dir() . '/tether-' . \md5(\dirname(__DIR__)) . '.key';
-        if (!\is_file($file) && false !== ($fp = @\fopen($file, 'x'))) {
-            \fwrite($fp, \bin2hex(\random_bytes(32)));
-            \fclose($fp);
+        if (\strlen($key) < 32) {
+            throw new \RuntimeException('Tether\'s signing key must be at least 32 bytes: set TETHER_SECRET to a long random string, or delete the key file ' . $file);
         }
 
-        return $key = (string) \file_get_contents($file);
+        return $key;
     }
 }

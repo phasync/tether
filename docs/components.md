@@ -132,6 +132,21 @@ public function mount(): void
 
 It runs inside a render, so keep it short. It may not call `js()`: nothing is in the browser yet.
 
+While `mount()` waits (a query, a request), the component and its parents are not on screen, and
+nothing else of the page is sent until it returns. For slow data, render a placeholder and load
+in `run()`:
+
+```php
+public bool $loading = true;
+
+public function run(): void
+{
+    $this->messages = Message::recent($this->room, 50);
+    $this->loading = false;
+    $this->requestRender();
+}
+```
+
 ## run()
 
 Runs in a coroutine of its own while the component is live, and is cancelled when it leaves.

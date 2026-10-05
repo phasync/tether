@@ -11,6 +11,8 @@ for it. Treat each like a POST route:
 
 - Check permissions **in the handler**: "the button is only shown to admins" protects nothing.
 - Validate arguments: types are checked, values are not (an `int $id` can be any id).
+- A handler that throws is logged in full; the browser is only told "The handler failed", so
+  driver and database messages stay on the server.
 - Keep everything else `private` or `protected`. Methods of `Component` itself (`render`,
   `mount`, `run`, `js`, ...) and an error boundary's `catch()` are never callable.
 
@@ -38,7 +40,7 @@ An App's live tab mounts from its URL, through its route: nothing the browser se
 
 A single live page's root component gets its props from `Tether::page()`. They go to the
 browser in the page and come back when the tab connects, **signed** (HMAC-SHA256 with
-`TETHER_SECRET`), so they can't be changed; they can be **read**, and replayed by the same
+`TETHER_SECRET`, at least 32 bytes: a shorter one is an error), so they can't be changed; they can be **read**, and replayed by the same
 visitor. Don't put secrets in them; put ids in them and look things up, with permission checks,
 in `mount()`.
 

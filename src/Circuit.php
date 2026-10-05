@@ -46,6 +46,9 @@ final class Circuit
     /** The component whose render() is running, for child(). */
     private ?Node $rendering = null;
 
+    /** The coroutine running that render(): others may call js() meanwhile, as it waits. */
+    private ?\Fiber $renderer = null;
+
     /** @var array<string, true> ids rendered in the patch under way */
     private array $fresh = [];
 
@@ -104,6 +107,9 @@ final class Circuit
             }
         } catch (CancelledException) {
             // How the writer ends: the tab is gone
+        } catch (\Throwable $e) {
+            // A boundary's catch() that fails, a frame that can't be encoded or sent
+            $this->fail(null, $e);
         }
     }
 
@@ -148,7 +154,7 @@ final class Circuit
         $node = $this->nodes[$id] ?? null;
         try {
             if (null === $node) {
-                throw new \InvalidArgumentException("No component $id: it has left the page");
+                throw new \InvalidArgumentException('No component ' . self::printable($id) . ': it has left the page');
             }
             self::checkCall($node->component, $method, $args);
         } catch (\InvalidArgumentException $e) {
@@ -202,7 +208,7 @@ final class Circuit
     /** @internal see Component::js() */
     public function js(Component $component, string $function, array $args): mixed
     {
-        if (null === $this->send || null !== $this->rendering) {
+        if (null === $this->send || (null !== $this->rendering && \Fiber::getCurrent() === $this->renderer)) {
             throw new \LogicException('js() is for event handlers and run(): not render() or mount(), and not before the tab is live');
         }
         \json_encode($args, \JSON_THROW_ON_ERROR);
@@ -452,7 +458,7 @@ final class Circuit
                         throw $e;
                     } catch (\Throwable $e) {
                         if (null !== $reply) {
-                            $this->reply($reply, error: $e->getMessage());
+                            $this->reply($reply, error: 'The handler failed');
                         }
                         $this->failed($node, $e);
 
@@ -516,7 +522,11 @@ final class Circuit
     private function render(Node $node): string
     {
         $outer           = $this->rendering;
+        $outerRenderer   = $this->renderer;
         $this->rendering = $node;
+        $this->renderer  = \Fiber::getCurrent();
+        // Marked again while this waits (mount() of a child, say): rendered again
+        unset($this->dirty[$node->component->tetherId]);
         $node->positions = [];
         $node->placed    = [];
         try {
@@ -531,6 +541,7 @@ final class Circuit
             throw new RenderFailure($node, $e);
         } finally {
             $this->rendering = $outer;
+            $this->renderer  = $outerRenderer;
         }
         $html = '<' . $m[1] . ' tether-id="' . $node->component->tetherId . '"' . \substr($html, \strlen($m[0]));
         // Children no longer placed leave
@@ -541,7 +552,6 @@ final class Circuit
             }
         }
         $node->html = $html;
-        unset($this->dirty[$node->component->tetherId]);
         $this->fresh[$node->component->tetherId] = true;
 
         return $html;
@@ -590,7 +600,7 @@ final class Circuit
      */
     private static function checkCall(Component $component, string $method, array $args): void
     {
-        $name = $component::class . "::$method()";
+        $name = $component::class . '::' . self::printable($method) . '()';
         if (!\method_exists($component, $method) || \str_starts_with($method, '__') || \method_exists(Component::class, $method) || ($component instanceof ErrorBoundary && 'catch' === \strtolower($method))) {
             throw new \InvalidArgumentException("$name is not an event handler");
         }
@@ -608,6 +618,12 @@ final class Circuit
                 throw new \InvalidArgumentException(\sprintf('%s: argument $%s must be %s, not %s', $name, $parameter->getName(), $parameter->getType(), \get_debug_type($value)));
             }
         }
+    }
+
+    /** Text from the browser, for a message that is logged: short, on one line. */
+    private static function printable(string $text): string
+    {
+        return \addcslashes(\substr($text, 0, 64), "\0..\37\177");
     }
 
     /** Whether a parameter of $type takes $value, a value decoded from JSON. */

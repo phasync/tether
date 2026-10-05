@@ -164,9 +164,11 @@ vendor/bin/swerve --http=8080 --public=html swerve.php
 ## Production
 
 - **Secret**: a single live page's props travel through the browser, signed. Set
-  `TETHER_SECRET` (any long random string) in the environment of every server; without it,
-  each machine makes a key of its own in the temporary directory, which is fine on one machine
-  only. (Apps don't need it: a tab mounts from its URL.)
+  `TETHER_SECRET` (a random string of at least 32 bytes) in the environment of every server;
+  without it, each machine makes a key of its own in the temporary directory (private to its
+  user), which is fine on one machine only. Pages open when the secret changes, or the key file is
+  deleted, are refused when they connect. A key shorter than 32 bytes is an error.
+  (Apps don't need it: a tab mounts from its URL.)
 - **Behind a proxy** (nginx, HAProxy, a load balancer): let WebSocket upgrades through to
   swerve (`/_tether/live`, or `.tether/live` below an App), and keep the `Host` header: the live
   endpoint compares the page's `Origin` with it. A page served from another origin must be
